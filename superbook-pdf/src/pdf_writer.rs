@@ -1006,4 +1006,393 @@ mod tests {
         assert!(matches!(options.compression, ImageCompression::Jpeg));
         assert!(matches!(options.page_size_mode, PageSizeMode::FirstPage));
     }
+
+    // Additional comprehensive tests
+
+    #[test]
+    fn test_dpi_boundary_values() {
+        // Low DPI
+        let options_low = PdfWriterOptions::builder().dpi(72).build();
+        assert_eq!(options_low.dpi, 72);
+
+        // Standard DPI
+        let options_std = PdfWriterOptions::builder().dpi(300).build();
+        assert_eq!(options_std.dpi, 300);
+
+        // High DPI
+        let options_high = PdfWriterOptions::builder().dpi(1200).build();
+        assert_eq!(options_high.dpi, 1200);
+
+        // Very high DPI
+        let options_very_high = PdfWriterOptions::builder().dpi(2400).build();
+        assert_eq!(options_very_high.dpi, 2400);
+    }
+
+    #[test]
+    fn test_jpeg_quality_boundary_values() {
+        // Minimum (clamped to 1)
+        let options_min = PdfWriterOptions::builder().jpeg_quality(1).build();
+        assert_eq!(options_min.jpeg_quality, 1);
+
+        // Maximum
+        let options_max = PdfWriterOptions::builder().jpeg_quality(100).build();
+        assert_eq!(options_max.jpeg_quality, 100);
+
+        // Typical values
+        for quality in [25, 50, 75, 85, 95] {
+            let opts = PdfWriterOptions::builder().jpeg_quality(quality).build();
+            assert_eq!(opts.jpeg_quality, quality);
+        }
+    }
+
+    #[test]
+    fn test_text_block_various_dimensions() {
+        // Small block
+        let small = TextBlock {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 5.0,
+            text: "X".to_string(),
+            font_size: 8.0,
+            vertical: false,
+        };
+        assert!(small.width > 0.0);
+        assert!(small.height > 0.0);
+
+        // Full page width block
+        let full_width = TextBlock {
+            x: 0.0,
+            y: 700.0,
+            width: 595.0, // A4 width in points
+            height: 14.0,
+            text: "Full width text line".to_string(),
+            font_size: 12.0,
+            vertical: false,
+        };
+        assert_eq!(full_width.width, 595.0);
+
+        // Tall vertical block
+        let tall_vertical = TextBlock {
+            x: 500.0,
+            y: 50.0,
+            width: 14.0,
+            height: 700.0,
+            text: "縦書き長文".to_string(),
+            font_size: 12.0,
+            vertical: true,
+        };
+        assert!(tall_vertical.height > tall_vertical.width);
+        assert!(tall_vertical.vertical);
+    }
+
+    #[test]
+    fn test_ocr_layer_many_pages() {
+        let pages: Vec<OcrPageText> = (0..100)
+            .map(|i| OcrPageText {
+                page_index: i,
+                blocks: vec![TextBlock {
+                    x: 100.0,
+                    y: 700.0,
+                    width: 400.0,
+                    height: 20.0,
+                    text: format!("Page {} text", i + 1),
+                    font_size: 12.0,
+                    vertical: false,
+                }],
+            })
+            .collect();
+
+        let layer = OcrLayer { pages };
+        assert_eq!(layer.pages.len(), 100);
+        assert_eq!(layer.pages[0].page_index, 0);
+        assert_eq!(layer.pages[99].page_index, 99);
+    }
+
+    #[test]
+    fn test_ocr_page_text_many_blocks() {
+        let blocks: Vec<TextBlock> = (0..50)
+            .map(|i| TextBlock {
+                x: 50.0,
+                y: 800.0 - (i as f64 * 15.0),
+                width: 500.0,
+                height: 12.0,
+                text: format!("Line {}", i + 1),
+                font_size: 10.0,
+                vertical: false,
+            })
+            .collect();
+
+        let page = OcrPageText {
+            page_index: 0,
+            blocks,
+        };
+
+        assert_eq!(page.blocks.len(), 50);
+    }
+
+    #[test]
+    fn test_error_from_io_conversion() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let pdf_err: PdfWriterError = io_err.into();
+        let msg = pdf_err.to_string();
+        assert!(msg.contains("access denied") || msg.contains("IO error"));
+    }
+
+    #[test]
+    fn test_options_clone() {
+        let original = PdfWriterOptions::builder()
+            .dpi(400)
+            .jpeg_quality(88)
+            .compression(ImageCompression::Flate)
+            .build();
+
+        let cloned = original.clone();
+        assert_eq!(cloned.dpi, original.dpi);
+        assert_eq!(cloned.jpeg_quality, original.jpeg_quality);
+    }
+
+    #[test]
+    fn test_text_block_clone() {
+        let original = TextBlock {
+            x: 100.0,
+            y: 200.0,
+            width: 300.0,
+            height: 50.0,
+            text: "Clone test".to_string(),
+            font_size: 14.0,
+            vertical: true,
+        };
+
+        let cloned = original.clone();
+        assert_eq!(cloned.x, original.x);
+        assert_eq!(cloned.y, original.y);
+        assert_eq!(cloned.text, original.text);
+        assert_eq!(cloned.vertical, original.vertical);
+    }
+
+    #[test]
+    fn test_ocr_layer_clone() {
+        let original = OcrLayer {
+            pages: vec![OcrPageText {
+                page_index: 0,
+                blocks: vec![],
+            }],
+        };
+
+        let cloned = original.clone();
+        assert_eq!(cloned.pages.len(), original.pages.len());
+    }
+
+    #[test]
+    fn test_options_debug_impl() {
+        let options = PdfWriterOptions::builder()
+            .dpi(300)
+            .jpeg_quality(90)
+            .build();
+
+        let debug_str = format!("{:?}", options);
+        assert!(debug_str.contains("PdfWriterOptions"));
+        assert!(debug_str.contains("300"));
+    }
+
+    #[test]
+    fn test_compression_debug_impl() {
+        let comp = ImageCompression::Flate;
+        let debug_str = format!("{:?}", comp);
+        assert!(debug_str.contains("Flate"));
+    }
+
+    #[test]
+    fn test_page_size_mode_debug_impl() {
+        let mode = PageSizeMode::Fixed {
+            width_pt: 595.0,
+            height_pt: 842.0,
+        };
+        let debug_str = format!("{:?}", mode);
+        assert!(debug_str.contains("Fixed"));
+        assert!(debug_str.contains("595"));
+    }
+
+    #[test]
+    fn test_compression_default() {
+        let comp: ImageCompression = Default::default();
+        assert!(matches!(comp, ImageCompression::Jpeg));
+    }
+
+    #[test]
+    fn test_page_size_mode_default() {
+        let mode: PageSizeMode = Default::default();
+        assert!(matches!(mode, PageSizeMode::FirstPage));
+    }
+
+    #[test]
+    fn test_fixed_page_size_various_standards() {
+        // A4 (595 x 842 pt)
+        let a4 = PageSizeMode::Fixed {
+            width_pt: 595.0,
+            height_pt: 842.0,
+        };
+        if let PageSizeMode::Fixed {
+            width_pt,
+            height_pt,
+        } = a4
+        {
+            assert_eq!(width_pt, 595.0);
+            assert_eq!(height_pt, 842.0);
+        }
+
+        // US Letter (612 x 792 pt)
+        let letter = PageSizeMode::Fixed {
+            width_pt: 612.0,
+            height_pt: 792.0,
+        };
+        if let PageSizeMode::Fixed {
+            width_pt,
+            height_pt,
+        } = letter
+        {
+            assert_eq!(width_pt, 612.0);
+            assert_eq!(height_pt, 792.0);
+        }
+
+        // US Legal (612 x 1008 pt)
+        let legal = PageSizeMode::Fixed {
+            width_pt: 612.0,
+            height_pt: 1008.0,
+        };
+        if let PageSizeMode::Fixed {
+            width_pt,
+            height_pt,
+        } = legal
+        {
+            assert_eq!(width_pt, 612.0);
+            assert_eq!(height_pt, 1008.0);
+        }
+    }
+
+    #[test]
+    fn test_metadata_default() {
+        let meta = PdfMetadata::default();
+        assert!(meta.title.is_none());
+        assert!(meta.author.is_none());
+        assert!(meta.subject.is_none());
+    }
+
+    #[test]
+    fn test_metadata_partial_fill() {
+        let meta = PdfMetadata {
+            title: Some("Only Title".to_string()),
+            ..Default::default()
+        };
+
+        assert!(meta.title.is_some());
+        assert!(meta.author.is_none());
+        assert!(meta.subject.is_none());
+    }
+
+    #[test]
+    fn test_multiple_images_pdf_verify_pages() {
+        let temp_dir = tempdir().unwrap();
+        let output = temp_dir.path().join("multi.pdf");
+
+        let images: Vec<_> = (1..=3)
+            .map(|i| PathBuf::from(format!("tests/fixtures/book_page_{}.png", i)))
+            .collect();
+
+        PrintPdfWriter::create_from_images(&images, &output, &PdfWriterOptions::default()).unwrap();
+
+        let doc = lopdf::Document::load(&output).unwrap();
+        assert_eq!(doc.get_pages().len(), 3);
+    }
+
+    #[test]
+    fn test_text_block_unicode() {
+        let unicode_block = TextBlock {
+            x: 100.0,
+            y: 700.0,
+            width: 400.0,
+            height: 20.0,
+            text: "日本語テキスト 中文 한글 🎉".to_string(),
+            font_size: 12.0,
+            vertical: false,
+        };
+
+        assert!(unicode_block.text.contains("日本語"));
+        assert!(unicode_block.text.contains("中文"));
+        assert!(unicode_block.text.contains("한글"));
+    }
+
+    #[test]
+    fn test_text_block_empty_text() {
+        let empty_block = TextBlock {
+            x: 100.0,
+            y: 700.0,
+            width: 400.0,
+            height: 20.0,
+            text: "".to_string(),
+            font_size: 12.0,
+            vertical: false,
+        };
+
+        assert!(empty_block.text.is_empty());
+    }
+
+    #[test]
+    fn test_font_size_variations() {
+        let sizes = [6.0, 8.0, 10.0, 12.0, 14.0, 18.0, 24.0, 36.0, 72.0];
+
+        for size in sizes {
+            let block = TextBlock {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: size * 1.2,
+                text: "Test".to_string(),
+                font_size: size,
+                vertical: false,
+            };
+            assert_eq!(block.font_size, size);
+        }
+    }
+
+    #[test]
+    fn test_builder_full_chain_with_all_options() {
+        let metadata = PdfMetadata {
+            title: Some("Full Test".to_string()),
+            author: Some("Tester".to_string()),
+            ..Default::default()
+        };
+
+        let ocr_layer = OcrLayer { pages: vec![] };
+
+        let options = PdfWriterOptions::builder()
+            .dpi(600)
+            .jpeg_quality(95)
+            .compression(ImageCompression::JpegLossless)
+            .page_size_mode(PageSizeMode::MaxSize)
+            .metadata(metadata)
+            .ocr_layer(ocr_layer)
+            .build();
+
+        assert_eq!(options.dpi, 600);
+        assert_eq!(options.jpeg_quality, 95);
+        assert!(options.metadata.is_some());
+        assert!(options.ocr_layer.is_some());
+    }
+
+    #[test]
+    fn test_error_variants_display() {
+        let errors = [
+            PdfWriterError::NoImages,
+            PdfWriterError::ImageNotFound(PathBuf::from("/test.png")),
+            PdfWriterError::UnsupportedFormat("RAW".to_string()),
+            PdfWriterError::GenerationError("Failed".to_string()),
+        ];
+
+        for err in &errors {
+            let display = format!("{}", err);
+            assert!(!display.is_empty());
+        }
+    }
 }

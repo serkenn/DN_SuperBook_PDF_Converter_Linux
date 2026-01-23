@@ -821,4 +821,367 @@ mod tests {
         assert_eq!(doc.path.file_name().unwrap(), "document.pdf");
         assert!(doc.path.is_absolute());
     }
+
+    // Additional comprehensive tests
+
+    #[test]
+    fn test_pdf_page_debug_impl() {
+        let page = PdfPage {
+            index: 5,
+            width_pt: 595.0,
+            height_pt: 842.0,
+            rotation: 90,
+            has_images: true,
+            has_text: true,
+        };
+
+        let debug_str = format!("{:?}", page);
+        assert!(debug_str.contains("PdfPage"));
+        assert!(debug_str.contains("595"));
+        assert!(debug_str.contains("90"));
+    }
+
+    #[test]
+    fn test_pdf_document_debug_impl() {
+        let doc = PdfDocument {
+            path: PathBuf::from("/test.pdf"),
+            page_count: 10,
+            metadata: PdfMetadata::default(),
+            pages: vec![],
+            is_encrypted: false,
+        };
+
+        let debug_str = format!("{:?}", doc);
+        assert!(debug_str.contains("PdfDocument"));
+        assert!(debug_str.contains("10"));
+    }
+
+    #[test]
+    fn test_pdf_metadata_debug_impl() {
+        let meta = PdfMetadata {
+            title: Some("Debug Test".to_string()),
+            ..Default::default()
+        };
+
+        let debug_str = format!("{:?}", meta);
+        assert!(debug_str.contains("PdfMetadata"));
+        assert!(debug_str.contains("Debug Test"));
+    }
+
+    #[test]
+    fn test_error_debug_impl() {
+        let err = PdfReaderError::EncryptedPdf;
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("EncryptedPdf"));
+    }
+
+    #[test]
+    fn test_metadata_default_all_none() {
+        let meta = PdfMetadata::default();
+        assert!(meta.title.is_none());
+        assert!(meta.author.is_none());
+        assert!(meta.subject.is_none());
+        assert!(meta.keywords.is_none());
+        assert!(meta.creator.is_none());
+        assert!(meta.producer.is_none());
+        assert!(meta.creation_date.is_none());
+        assert!(meta.modification_date.is_none());
+    }
+
+    #[test]
+    fn test_page_size_extreme_small() {
+        let tiny = PdfPage {
+            index: 0,
+            width_pt: 72.0,  // 1 inch
+            height_pt: 72.0, // 1 inch square
+            rotation: 0,
+            has_images: false,
+            has_text: false,
+        };
+
+        assert_eq!(tiny.width_pt, tiny.height_pt);
+    }
+
+    #[test]
+    fn test_page_size_extreme_large() {
+        let huge = PdfPage {
+            index: 0,
+            width_pt: 14400.0, // 200 inches wide
+            height_pt: 14400.0,
+            rotation: 0,
+            has_images: true,
+            has_text: false,
+        };
+
+        assert!(huge.width_pt > 10000.0);
+    }
+
+    #[test]
+    fn test_document_many_pages() {
+        let pages: Vec<PdfPage> = (0..1000)
+            .map(|i| PdfPage {
+                index: i,
+                width_pt: 595.0,
+                height_pt: 842.0,
+                rotation: (i % 4) as u16 * 90,
+                has_images: i % 3 == 0,
+                has_text: i % 2 == 0,
+            })
+            .collect();
+
+        let doc = PdfDocument {
+            path: PathBuf::from("/large_book.pdf"),
+            page_count: 1000,
+            metadata: PdfMetadata::default(),
+            pages,
+            is_encrypted: false,
+        };
+
+        assert_eq!(doc.pages.len(), 1000);
+        assert_eq!(doc.page_count, 1000);
+    }
+
+    #[test]
+    fn test_page_clone() {
+        let original = PdfPage {
+            index: 42,
+            width_pt: 612.0,
+            height_pt: 792.0,
+            rotation: 180,
+            has_images: true,
+            has_text: true,
+        };
+
+        let cloned = original.clone();
+        assert_eq!(cloned.index, original.index);
+        assert_eq!(cloned.width_pt, original.width_pt);
+        assert_eq!(cloned.rotation, original.rotation);
+    }
+
+    #[test]
+    fn test_error_all_variants() {
+        let errors = [
+            PdfReaderError::FileNotFound(PathBuf::from("/not/found.pdf")),
+            PdfReaderError::InvalidFormat("corrupt header".to_string()),
+            PdfReaderError::EncryptedPdf,
+            PdfReaderError::ParseError("parse issue".to_string()),
+        ];
+
+        for err in &errors {
+            let msg = err.to_string();
+            assert!(!msg.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_metadata_keywords_parsing() {
+        let meta = PdfMetadata {
+            keywords: Some("rust, pdf, parsing, test".to_string()),
+            ..Default::default()
+        };
+
+        let keywords = meta.keywords.as_ref().unwrap();
+        assert!(keywords.contains("rust"));
+        assert!(keywords.contains("pdf"));
+        assert!(keywords.contains("parsing"));
+    }
+
+    #[test]
+    fn test_metadata_japanese_content() {
+        let meta = PdfMetadata {
+            title: Some("日本語タイトル".to_string()),
+            author: Some("山田太郎".to_string()),
+            subject: Some("テスト文書".to_string()),
+            ..Default::default()
+        };
+
+        assert!(meta.title.as_ref().unwrap().contains("日本語"));
+        assert!(meta.author.as_ref().unwrap().contains("山田"));
+    }
+
+    #[test]
+    fn test_page_aspect_ratios() {
+        // Portrait
+        let portrait = PdfPage {
+            index: 0,
+            width_pt: 595.0,
+            height_pt: 842.0,
+            rotation: 0,
+            has_images: false,
+            has_text: false,
+        };
+        let portrait_ratio = portrait.height_pt / portrait.width_pt;
+        assert!(portrait_ratio > 1.0); // Taller than wide
+
+        // Landscape
+        let landscape = PdfPage {
+            index: 0,
+            width_pt: 842.0,
+            height_pt: 595.0,
+            rotation: 0,
+            has_images: false,
+            has_text: false,
+        };
+        let landscape_ratio = landscape.height_pt / landscape.width_pt;
+        assert!(landscape_ratio < 1.0); // Wider than tall
+
+        // Square
+        let square = PdfPage {
+            index: 0,
+            width_pt: 500.0,
+            height_pt: 500.0,
+            rotation: 0,
+            has_images: false,
+            has_text: false,
+        };
+        let square_ratio = square.height_pt / square.width_pt;
+        assert!((square_ratio - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_document_with_mixed_page_sizes() {
+        let pages = vec![
+            PdfPage {
+                index: 0,
+                width_pt: 595.0,
+                height_pt: 842.0,
+                rotation: 0,
+                has_images: true,
+                has_text: true,
+            },
+            PdfPage {
+                index: 1,
+                width_pt: 612.0,
+                height_pt: 792.0,
+                rotation: 0,
+                has_images: false,
+                has_text: true,
+            },
+            PdfPage {
+                index: 2,
+                width_pt: 842.0,
+                height_pt: 595.0,
+                rotation: 90,
+                has_images: true,
+                has_text: false,
+            },
+        ];
+
+        let doc = PdfDocument {
+            path: PathBuf::from("/mixed.pdf"),
+            page_count: 3,
+            metadata: PdfMetadata::default(),
+            pages,
+            is_encrypted: false,
+        };
+
+        // Verify different page sizes
+        assert_ne!(doc.pages[0].width_pt, doc.pages[1].width_pt);
+        assert_ne!(doc.pages[1].height_pt, doc.pages[2].height_pt);
+    }
+
+    #[test]
+    fn test_lopdf_reader_construction() {
+        // LopdfReader requires a valid PDF path
+        // Test that it returns error for nonexistent file
+        let result = LopdfReader::new("/nonexistent/file.pdf");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_page_index_sequential() {
+        let pages: Vec<PdfPage> = (0..50)
+            .map(|i| PdfPage {
+                index: i,
+                width_pt: 595.0,
+                height_pt: 842.0,
+                rotation: 0,
+                has_images: false,
+                has_text: false,
+            })
+            .collect();
+
+        for (expected_idx, page) in pages.iter().enumerate() {
+            assert_eq!(page.index, expected_idx);
+        }
+    }
+
+    #[test]
+    fn test_metadata_dates_format() {
+        let meta = PdfMetadata {
+            creation_date: Some("D:20240101120000+09'00'".to_string()),
+            modification_date: Some("D:20240115093000Z".to_string()),
+            ..Default::default()
+        };
+
+        // PDF date format starts with D:
+        assert!(meta.creation_date.as_ref().unwrap().starts_with("D:"));
+        assert!(meta.modification_date.as_ref().unwrap().starts_with("D:"));
+    }
+
+    #[test]
+    fn test_document_zero_pages() {
+        let doc = PdfDocument {
+            path: PathBuf::from("/empty.pdf"),
+            page_count: 0,
+            metadata: PdfMetadata::default(),
+            pages: vec![],
+            is_encrypted: false,
+        };
+
+        assert_eq!(doc.page_count, 0);
+        assert!(doc.pages.is_empty());
+    }
+
+    #[test]
+    fn test_error_file_not_found_path() {
+        let path = PathBuf::from("/very/long/path/to/missing/document.pdf");
+        let err = PdfReaderError::FileNotFound(path.clone());
+
+        let msg = err.to_string();
+        assert!(msg.contains("document.pdf") || msg.contains("not found"));
+    }
+
+    #[test]
+    fn test_parse_error_details() {
+        let details = "Unexpected token at byte 12345";
+        let err = PdfReaderError::ParseError(details.to_string());
+
+        let msg = err.to_string();
+        assert!(msg.contains("12345") || msg.contains("error"));
+    }
+
+    #[test]
+    fn test_invalid_format_error() {
+        let reason = "Missing PDF header %PDF-";
+        let err = PdfReaderError::InvalidFormat(reason.to_string());
+
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid") || msg.contains("format"));
+    }
+
+    #[test]
+    fn test_page_content_combinations() {
+        // All combinations of has_images and has_text
+        let combinations = [
+            (false, false), // Empty page
+            (true, false),  // Image only
+            (false, true),  // Text only
+            (true, true),   // Both
+        ];
+
+        for (has_images, has_text) in combinations {
+            let page = PdfPage {
+                index: 0,
+                width_pt: 595.0,
+                height_pt: 842.0,
+                rotation: 0,
+                has_images,
+                has_text,
+            };
+
+            assert_eq!(page.has_images, has_images);
+            assert_eq!(page.has_text, has_text);
+        }
+    }
 }
