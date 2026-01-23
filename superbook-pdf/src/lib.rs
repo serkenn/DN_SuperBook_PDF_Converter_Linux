@@ -124,7 +124,7 @@ pub use deskew::{
 };
 pub use image_extract::{
     ColorSpace, ExtractError, ExtractOptions, ExtractOptionsBuilder, ExtractedPage, ImageFormat,
-    MagickExtractor,
+    LopdfExtractor, MagickExtractor,
 };
 pub use margin::{
     ContentDetectionMode, ContentRect, ImageMarginDetector, MarginDetection, MarginError,

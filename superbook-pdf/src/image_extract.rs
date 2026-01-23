@@ -448,6 +448,200 @@ impl MagickExtractor {
     }
 }
 
+/// Pure Rust PDF image extractor using lopdf
+///
+/// This extractor works without external tools by directly extracting
+/// embedded JPEG images from the PDF. Works best with scanned PDFs where
+/// each page is a single JPEG image (DCTDecode filter).
+pub struct LopdfExtractor;
+
+impl LopdfExtractor {
+    /// Extract all embedded JPEG images from a PDF
+    ///
+    /// This method extracts XObject images with DCTDecode filter (JPEG).
+    /// For scanned PDFs, this typically means one JPEG per page.
+    pub fn extract_all(
+        pdf_path: &Path,
+        output_dir: &Path,
+        _options: &ExtractOptions,
+    ) -> Result<Vec<ExtractedPage>> {
+        if !pdf_path.exists() {
+            return Err(ExtractError::PdfNotFound(pdf_path.to_path_buf()));
+        }
+
+        // Create output directory
+        if !output_dir.exists() {
+            std::fs::create_dir_all(output_dir)?;
+        }
+
+        let doc = lopdf::Document::load(pdf_path).map_err(|e| ExtractError::ExtractionFailed {
+            page: 0,
+            reason: format!("Failed to load PDF: {}", e),
+        })?;
+
+        let mut results = Vec::new();
+        let mut image_count = 0;
+
+        // Iterate through all objects to find images
+        for (obj_id, object) in doc.objects.iter() {
+            if let Ok(stream) = object.as_stream() {
+                // Check if it's an Image XObject
+                if let Ok(subtype) = stream.dict.get(b"Subtype") {
+                    if let Ok(subtype_name) = subtype.as_name_str() {
+                        if subtype_name == "Image" {
+                            if let Ok(extracted) = Self::extract_image_stream(
+                                stream,
+                                image_count,
+                                obj_id,
+                                output_dir,
+                            ) {
+                                results.push(extracted);
+                                image_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if results.is_empty() {
+            return Err(ExtractError::ExtractionFailed {
+                page: 0,
+                reason: "No extractable images found. This PDF may require ImageMagick (install with: sudo apt install imagemagick).".to_string(),
+            });
+        }
+
+        // Sort by page index for consistent ordering
+        results.sort_by_key(|r| r.page_index);
+
+        Ok(results)
+    }
+
+    /// Extract a single image stream to file
+    fn extract_image_stream(
+        stream: &lopdf::Stream,
+        index: usize,
+        obj_id: &lopdf::ObjectId,
+        output_dir: &Path,
+    ) -> Result<ExtractedPage> {
+        // Get image dimensions
+        let width = stream.dict.get(b"Width")
+            .ok()
+            .and_then(|w| w.as_i64().ok())
+            .unwrap_or(0) as u32;
+        let height = stream.dict.get(b"Height")
+            .ok()
+            .and_then(|h| h.as_i64().ok())
+            .unwrap_or(0) as u32;
+
+        // Determine filter type
+        let filter = stream.dict.get(b"Filter")
+            .ok()
+            .and_then(|f| f.as_name_str().ok())
+            .unwrap_or("");
+
+        // Only extract JPEG images (DCTDecode) - these are most common in scanned PDFs
+        if filter == "DCTDecode" {
+            let output_path = output_dir.join(format!("page_{:04}_obj{}_{}.jpg", index, obj_id.0, obj_id.1));
+
+            // JPEG data can be saved directly (no decompression needed)
+            std::fs::write(&output_path, &stream.content)?;
+
+            return Ok(ExtractedPage {
+                page_index: index,
+                path: output_path,
+                width,
+                height,
+                format: ImageFormat::Jpeg { quality: 95 },
+            });
+        }
+
+        // Try to decompress and save other formats
+        if let Ok(decoded) = stream.decompressed_content() {
+            if width > 0 && height > 0 {
+                // Determine channels from ColorSpace
+                let channels = stream.dict.get(b"ColorSpace")
+                    .ok()
+                    .and_then(|cs| cs.as_name_str().ok())
+                    .map(|name| match name {
+                        "DeviceGray" | "CalGray" => 1,
+                        "DeviceRGB" | "CalRGB" => 3,
+                        "DeviceCMYK" => 4,
+                        _ => 3,
+                    })
+                    .unwrap_or(3);
+
+                let expected_size = (width as usize) * (height as usize) * channels;
+                if decoded.len() >= expected_size {
+                    let output_path = output_dir.join(format!("page_{:04}_obj{}_{}.png", index, obj_id.0, obj_id.1));
+
+                    let img_opt = match channels {
+                        1 => image::GrayImage::from_raw(width, height, decoded[..expected_size].to_vec())
+                            .map(image::DynamicImage::ImageLuma8),
+                        3 => image::RgbImage::from_raw(width, height, decoded[..expected_size].to_vec())
+                            .map(image::DynamicImage::ImageRgb8),
+                        4 => {
+                            // CMYK to RGB conversion
+                            let rgb: Vec<u8> = decoded[..expected_size]
+                                .chunks_exact(4)
+                                .flat_map(|cmyk| {
+                                    let (c, m, y, k) = (cmyk[0] as f32 / 255.0, cmyk[1] as f32 / 255.0,
+                                                        cmyk[2] as f32 / 255.0, cmyk[3] as f32 / 255.0);
+                                    [((1.0 - c) * (1.0 - k) * 255.0) as u8,
+                                     ((1.0 - m) * (1.0 - k) * 255.0) as u8,
+                                     ((1.0 - y) * (1.0 - k) * 255.0) as u8]
+                                })
+                                .collect();
+                            image::RgbImage::from_raw(width, height, rgb)
+                                .map(image::DynamicImage::ImageRgb8)
+                        }
+                        _ => None,
+                    };
+
+                    if let Some(img) = img_opt {
+                        img.save(&output_path).map_err(|e| ExtractError::ExtractionFailed {
+                            page: index,
+                            reason: format!("Failed to save: {}", e),
+                        })?;
+                        return Ok(ExtractedPage {
+                            page_index: index,
+                            path: output_path,
+                            width,
+                            height,
+                            format: ImageFormat::Png,
+                        });
+                    }
+                }
+            }
+        }
+
+        Err(ExtractError::ExtractionFailed {
+            page: index,
+            reason: format!("Unsupported image filter: {}", filter),
+        })
+    }
+
+    /// Check if ImageMagick is available
+    pub fn magick_available() -> bool {
+        which::which("magick").is_ok() || which::which("convert").is_ok()
+    }
+
+    /// Extract using best available method
+    pub fn extract_auto(
+        pdf_path: &Path,
+        output_dir: &Path,
+        options: &ExtractOptions,
+    ) -> Result<Vec<ExtractedPage>> {
+        // Try ImageMagick first if available (better quality for complex PDFs)
+        if Self::magick_available() {
+            return MagickExtractor::extract_all(pdf_path, output_dir, options);
+        }
+
+        // Fall back to pure Rust extraction
+        Self::extract_all(pdf_path, output_dir, options)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

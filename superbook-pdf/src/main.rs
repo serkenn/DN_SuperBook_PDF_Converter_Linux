@@ -8,7 +8,7 @@ use std::time::Instant;
 use superbook_pdf::pdf_writer::{OcrLayer, OcrPageText, TextBlock};
 use superbook_pdf::{
     exit_codes, AiBridgeConfig, Cli, Commands, ConvertArgs, DeskewOptions, ExtractOptions,
-    ImageMarginDetector, ImageProcDeskewer, LopdfReader, MagickExtractor, MarginOptions,
+    ImageMarginDetector, ImageProcDeskewer, LopdfExtractor, LopdfReader, MarginOptions,
     PdfWriterOptions, PrintPdfWriter, RealEsrgan, RealEsrganOptions, SubprocessBridge, YomiToku,
     YomiTokuOptions,
 };
@@ -174,7 +174,7 @@ fn process_single_pdf(
     let extracted_dir = work_dir.join("extracted");
     std::fs::create_dir_all(&extracted_dir)?;
 
-    let extracted_pages = MagickExtractor::extract_all(pdf_path, &extracted_dir, &extract_options)?;
+    let extracted_pages = LopdfExtractor::extract_auto(pdf_path, &extracted_dir, &extract_options)?;
     if verbose {
         println!("    Extracted {} pages", extracted_pages.len());
     }
