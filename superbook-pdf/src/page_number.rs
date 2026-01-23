@@ -941,4 +941,124 @@ mod tests {
         let _err5: PageNumberError =
             std::io::Error::new(std::io::ErrorKind::NotFound, "test").into();
     }
+
+    // TC-PGN-004: 奇偶パターン検出
+    #[test]
+    fn test_odd_even_pattern() {
+        // 奇数ページと偶数ページで異なるオフセットを持つ分析結果を作成
+        let analysis = PageNumberAnalysis {
+            detections: vec![
+                DetectedPageNumber {
+                    page_index: 0,
+                    number: Some(1),
+                    position: PageNumberRect {
+                        x: 50,
+                        y: 900,
+                        width: 50,
+                        height: 30,
+                    },
+                    confidence: 0.9,
+                    raw_text: "1".to_string(),
+                },
+                DetectedPageNumber {
+                    page_index: 1,
+                    number: Some(2),
+                    position: PageNumberRect {
+                        x: 400,
+                        y: 900,
+                        width: 50,
+                        height: 30,
+                    },
+                    confidence: 0.9,
+                    raw_text: "2".to_string(),
+                },
+            ],
+            position_pattern: PageNumberPosition::BottomOutside,
+            odd_page_offset_x: 50,   // 奇数ページは左
+            even_page_offset_x: 400, // 偶数ページは右
+            overall_confidence: 0.9,
+            missing_pages: vec![],
+            duplicate_pages: vec![],
+        };
+
+        // 奇数ページと偶数ページでオフセットが異なることを検証
+        assert_ne!(analysis.odd_page_offset_x, analysis.even_page_offset_x);
+        assert_eq!(analysis.odd_page_offset_x, 50);
+        assert_eq!(analysis.even_page_offset_x, 400);
+    }
+
+    // TC-PGN-008: ローマ数字変換テスト追加
+    #[test]
+    fn test_roman_numeral_conversion_extended() {
+        // テスト用のローマ数字パターン
+        let test_cases = [
+            ("i", 1),
+            ("ii", 2),
+            ("iii", 3),
+            ("iv", 4),
+            ("v", 5),
+            ("vi", 6),
+            ("ix", 9),
+            ("x", 10),
+            ("xi", 11),
+            ("xv", 15),
+            ("xx", 20),
+            ("l", 50),
+            ("c", 100),
+        ];
+
+        for (roman, expected) in test_cases {
+            let result = TesseractPageDetector::parse_roman_numeral(roman);
+            assert_eq!(
+                result,
+                Some(expected),
+                "Failed for roman numeral: {}",
+                roman
+            );
+        }
+
+        // 大文字も対応
+        assert_eq!(TesseractPageDetector::parse_roman_numeral("III"), Some(3));
+        assert_eq!(TesseractPageDetector::parse_roman_numeral("XIV"), Some(14));
+    }
+
+    #[test]
+    fn test_analysis_with_different_positions() {
+        // 異なる位置パターンのテスト
+        let positions = [
+            PageNumberPosition::TopCenter,
+            PageNumberPosition::TopOutside,
+            PageNumberPosition::BottomCenter,
+            PageNumberPosition::BottomOutside,
+        ];
+
+        for pos in positions {
+            let analysis = PageNumberAnalysis {
+                detections: vec![],
+                position_pattern: pos,
+                odd_page_offset_x: 0,
+                even_page_offset_x: 0,
+                overall_confidence: 0.8,
+                missing_pages: vec![],
+                duplicate_pages: vec![],
+            };
+
+            assert_eq!(analysis.position_pattern, pos);
+        }
+    }
+
+    #[test]
+    fn test_error_display_messages() {
+        let err1 = PageNumberError::ImageNotFound(PathBuf::from("/path/to/image.png"));
+        assert!(err1.to_string().contains("/path/to/image.png"));
+
+        let err2 = PageNumberError::OcrFailed("Tesseract error".to_string());
+        assert!(err2.to_string().contains("Tesseract"));
+
+        let err3 = PageNumberError::NoPageNumbersDetected;
+        assert!(!err3.to_string().is_empty());
+
+        let err4 = PageNumberError::InconsistentPageNumbers;
+        assert!(!err4.to_string().is_empty());
+    }
 }
