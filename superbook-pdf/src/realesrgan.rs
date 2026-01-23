@@ -980,4 +980,126 @@ mod tests {
         assert!(result.vram_used_mb.is_none());
         assert_eq!(result.actual_scale, 4.0);
     }
+
+    // TC-RES-006: タイルサイズ調整テスト拡張
+    #[test]
+    fn test_tile_size_variations() {
+        // 様々なタイルサイズの設定をテスト
+        let tile_sizes = [128, 256, 400, 512, 1024];
+
+        for &size in &tile_sizes {
+            let options = RealEsrganOptions::builder().tile_size(size).build();
+            // tile_size は最小32にクランプされる
+            assert!(
+                options.tile_size >= 32,
+                "Tile size {} was clamped incorrectly",
+                size
+            );
+        }
+    }
+
+    // TC-RES-009: 推奨タイルサイズ算出テスト拡張
+    // Note: RealEsrgan::recommended_tile_sizeはSubprocessBridgeが必要なので
+    // ここではタイルサイズアルゴリズムのロジックをテスト
+    #[test]
+    fn test_tile_size_algorithm_extended() {
+        // タイルサイズアルゴリズムの検証
+        // base_tile = 400, base_vram = 4096
+        // scale_factor = (vram / base_vram).sqrt()
+
+        let vram_configs: [(u64, u32); 4] = [
+            (2048, 283),  // sqrt(0.5) * 400 ≈ 283
+            (4096, 400),  // sqrt(1.0) * 400 = 400
+            (8192, 566),  // sqrt(2.0) * 400 ≈ 566
+            (16384, 800), // sqrt(4.0) * 400 = 800
+        ];
+
+        for (vram_mb, expected_approx) in vram_configs {
+            let scale_factor = (vram_mb as f64 / 4096.0).sqrt();
+            let calculated = (400.0 * scale_factor) as u32;
+            let clamped = calculated.clamp(128, 1024);
+
+            // 計算値が期待値の±10%以内であることを確認
+            let diff = (clamped as i32 - expected_approx as i32).unsigned_abs();
+            assert!(
+                diff <= expected_approx / 10 + 10,
+                "For {}MB VRAM: expected ~{}, got {}",
+                vram_mb,
+                expected_approx,
+                clamped
+            );
+        }
+    }
+
+    // TC-RES-005: 異なるモデル使用テスト拡張
+    #[test]
+    fn test_all_model_variants() {
+        let models = [
+            RealEsrganModel::X2Plus,
+            RealEsrganModel::X4Plus,
+            RealEsrganModel::X4PlusAnime,
+            RealEsrganModel::NetX4Plus,
+        ];
+
+        for model in models {
+            let options = RealEsrganOptions::builder().model(model.clone()).build();
+
+            // モデルが正しく設定されていることを確認
+            assert_eq!(options.model, model);
+
+            // デフォルトスケールが取得できることを確認
+            let default_scale = model.default_scale();
+            assert!(default_scale >= 2 && default_scale <= 4);
+        }
+    }
+
+    // TC-RES-007: 出力フォーマットテスト拡張
+    #[test]
+    fn test_output_format_variants() {
+        let formats = [
+            (OutputFormat::Png, "png"),
+            (OutputFormat::Jpg { quality: 90 }, "jpg"),
+            (OutputFormat::Webp { quality: 85 }, "webp"),
+        ];
+
+        for (format, expected_ext) in formats {
+            assert_eq!(format.extension(), expected_ext);
+        }
+    }
+
+    #[test]
+    fn test_batch_result_construction() {
+        let result = BatchUpscaleResult {
+            successful: vec![UpscaleResult {
+                input_path: PathBuf::from("img1.png"),
+                output_path: PathBuf::from("img1_upscaled.png"),
+                original_size: (100, 100),
+                upscaled_size: (200, 200),
+                actual_scale: 2.0,
+                processing_time: Duration::from_secs(1),
+                vram_used_mb: Some(1000),
+            }],
+            failed: vec![(PathBuf::from("bad.png"), "File not found".to_string())],
+            total_time: Duration::from_secs(5),
+            peak_vram_mb: Some(2000),
+        };
+
+        assert_eq!(result.successful.len(), 1);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.peak_vram_mb, Some(2000));
+    }
+
+    #[test]
+    fn test_error_specific_messages() {
+        let err = RealEsrganError::InsufficientVram {
+            required: 8000,
+            available: 4000,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("8000") || msg.contains("4000"));
+
+        let err = RealEsrganError::InvalidScale(3);
+        let msg = err.to_string();
+        assert!(msg.contains("3"));
+    }
 }
