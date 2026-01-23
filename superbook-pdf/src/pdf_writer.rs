@@ -30,8 +30,42 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+// ============================================================
+// Constants
+// ============================================================
+
 /// Conversion factor: 1 point = 0.352_778 mm (1/72 inch ≈ 25.4/72)
 const POINTS_TO_MM: f32 = 0.352_778;
+
+/// Millimeters per inch
+const MM_PER_INCH: f32 = 25.4;
+
+/// Points per inch (PDF standard)
+const POINTS_PER_INCH: f32 = 72.0;
+
+/// Default DPI for standard quality
+const DEFAULT_DPI: u32 = 300;
+
+/// High quality DPI for archival output
+const HIGH_QUALITY_DPI: u32 = 600;
+
+/// Compact DPI for smaller file sizes
+const COMPACT_DPI: u32 = 150;
+
+/// Default JPEG quality
+const DEFAULT_JPEG_QUALITY: u8 = 90;
+
+/// High quality JPEG setting
+const HIGH_QUALITY_JPEG: u8 = 95;
+
+/// Compact JPEG quality for smaller files
+const COMPACT_JPEG_QUALITY: u8 = 75;
+
+/// Minimum JPEG quality
+const MIN_JPEG_QUALITY: u8 = 1;
+
+/// Maximum JPEG quality
+const MAX_JPEG_QUALITY: u8 = 100;
 
 /// PDF writing error types
 #[derive(Debug, Error)]
@@ -74,8 +108,8 @@ pub struct PdfWriterOptions {
 impl Default for PdfWriterOptions {
     fn default() -> Self {
         Self {
-            dpi: 300,
-            jpeg_quality: 90,
+            dpi: DEFAULT_DPI,
+            jpeg_quality: DEFAULT_JPEG_QUALITY,
             compression: ImageCompression::Jpeg,
             page_size_mode: PageSizeMode::FirstPage,
             metadata: None,
@@ -93,8 +127,8 @@ impl PdfWriterOptions {
     /// Create options optimized for high quality output
     pub fn high_quality() -> Self {
         Self {
-            dpi: 600,
-            jpeg_quality: 95,
+            dpi: HIGH_QUALITY_DPI,
+            jpeg_quality: HIGH_QUALITY_JPEG,
             compression: ImageCompression::JpegLossless,
             ..Default::default()
         }
@@ -103,8 +137,8 @@ impl PdfWriterOptions {
     /// Create options optimized for smaller file size
     pub fn compact() -> Self {
         Self {
-            dpi: 150,
-            jpeg_quality: 75,
+            dpi: COMPACT_DPI,
+            jpeg_quality: COMPACT_JPEG_QUALITY,
             compression: ImageCompression::Jpeg,
             ..Default::default()
         }
@@ -126,7 +160,7 @@ impl PdfWriterOptionsBuilder {
 
     /// Set JPEG quality (1-100)
     pub fn jpeg_quality(mut self, quality: u8) -> Self {
-        self.options.jpeg_quality = quality.clamp(1, 100);
+        self.options.jpeg_quality = quality.clamp(MIN_JPEG_QUALITY, MAX_JPEG_QUALITY);
         self
     }
 
@@ -267,8 +301,8 @@ impl PrintPdfWriter {
         let dpi = options.dpi as f64;
 
         // Convert pixels to millimeters for printpdf
-        let width_mm = (width_px as f32 / dpi as f32) * 25.4;
-        let height_mm = (height_px as f32 / dpi as f32) * 25.4;
+        let width_mm = (width_px as f32 / dpi as f32) * MM_PER_INCH;
+        let height_mm = (height_px as f32 / dpi as f32) * MM_PER_INCH;
 
         // Create PDF document
         let title = options
@@ -310,14 +344,14 @@ impl PrintPdfWriter {
                     height_pt,
                 } => {
                     // Convert points to pixels at specified DPI
-                    let w = (width_pt as f32 * dpi_f32 / 72.0) as u32;
-                    let h = (height_pt as f32 * dpi_f32 / 72.0) as u32;
+                    let w = (width_pt as f32 * dpi_f32 / POINTS_PER_INCH) as u32;
+                    let h = (height_pt as f32 * dpi_f32 / POINTS_PER_INCH) as u32;
                     (w, h)
                 }
             };
 
-            let w_mm = (w_px as f32 / dpi_f32) * 25.4;
-            let h_mm = (h_px as f32 / dpi_f32) * 25.4;
+            let w_mm = (w_px as f32 / dpi_f32) * MM_PER_INCH;
+            let h_mm = (h_px as f32 / dpi_f32) * MM_PER_INCH;
 
             let (page, layer) = doc.add_page(printpdf::Mm(w_mm), printpdf::Mm(h_mm), "Layer 1");
 

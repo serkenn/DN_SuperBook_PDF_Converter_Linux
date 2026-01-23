@@ -7,6 +7,22 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use thiserror::Error;
 
+// ============================================================
+// Constants
+// ============================================================
+
+/// Default timeout for AI processing (1 hour)
+const DEFAULT_TIMEOUT_SECS: u64 = 3600;
+
+/// Low VRAM limit (2GB)
+const LOW_VRAM_MB: u64 = 2048;
+
+/// Low VRAM tile size
+const LOW_VRAM_TILE_SIZE: u32 = 128;
+
+/// Default tile size for GPU processing
+const DEFAULT_GPU_TILE_SIZE: u32 = 400;
+
 /// AI Bridge error types
 #[derive(Debug, Error)]
 pub enum AiBridgeError {
@@ -57,7 +73,7 @@ impl Default for AiBridgeConfig {
         Self {
             venv_path: PathBuf::from("./ai_venv"),
             gpu_config: GpuConfig::default(),
-            timeout: Duration::from_secs(3600), // 1 hour
+            timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             retry_config: RetryConfig::default(),
             log_level: LogLevel::Info,
         }
@@ -86,8 +102,8 @@ impl AiBridgeConfig {
         Self {
             gpu_config: GpuConfig {
                 enabled: true,
-                max_vram_mb: Some(2048),
-                tile_size: Some(128),
+                max_vram_mb: Some(LOW_VRAM_MB),
+                tile_size: Some(LOW_VRAM_TILE_SIZE),
                 ..Default::default()
             },
             ..Default::default()
@@ -175,7 +191,7 @@ impl Default for GpuConfig {
             enabled: true,
             device_id: None,
             max_vram_mb: None,
-            tile_size: Some(400),
+            tile_size: Some(DEFAULT_GPU_TILE_SIZE),
         }
     }
 }
