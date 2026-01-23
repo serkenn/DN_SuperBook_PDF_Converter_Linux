@@ -8,6 +8,25 @@ use thiserror::Error;
 
 use crate::ai_bridge::{AiBridgeError, AiTool, SubprocessBridge};
 
+// ============================================================
+// Constants
+// ============================================================
+
+/// Default confidence threshold for OCR results
+const DEFAULT_CONFIDENCE_THRESHOLD: f32 = 0.5;
+
+/// Lower confidence threshold for book scanning (captures more text)
+const BOOK_CONFIDENCE_THRESHOLD: f32 = 0.3;
+
+/// Default timeout for OCR processing (5 minutes)
+const DEFAULT_TIMEOUT_SECS: u64 = 300;
+
+/// Minimum confidence threshold
+const MIN_CONFIDENCE: f32 = 0.0;
+
+/// Maximum confidence threshold
+const MAX_CONFIDENCE: f32 = 1.0;
+
 /// YomiToku error types
 #[derive(Debug, Error)]
 pub enum YomiTokuError {
@@ -63,8 +82,8 @@ impl Default for YomiTokuOptions {
             output_format: OutputFormat::Json,
             use_gpu: true,
             gpu_id: None,
-            confidence_threshold: 0.5,
-            timeout_secs: 300,
+            confidence_threshold: DEFAULT_CONFIDENCE_THRESHOLD,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
             detect_vertical: true,
             language: Language::Japanese,
         }
@@ -81,7 +100,7 @@ impl YomiTokuOptions {
     pub fn for_books() -> Self {
         Self {
             detect_vertical: true,
-            confidence_threshold: 0.3,
+            confidence_threshold: BOOK_CONFIDENCE_THRESHOLD,
             ..Default::default()
         }
     }
@@ -122,7 +141,7 @@ impl YomiTokuOptionsBuilder {
 
     /// Set confidence threshold
     pub fn confidence_threshold(mut self, threshold: f32) -> Self {
-        self.options.confidence_threshold = threshold.clamp(0.0, 1.0);
+        self.options.confidence_threshold = threshold.clamp(MIN_CONFIDENCE, MAX_CONFIDENCE);
         self
     }
 

@@ -8,6 +8,34 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+// ============================================================
+// Constants
+// ============================================================
+
+/// Default search region percentage (percentage of image height)
+const DEFAULT_SEARCH_REGION_PERCENT: f32 = 10.0;
+
+/// Larger search region for vertical text (Japanese books)
+const VERTICAL_SEARCH_REGION_PERCENT: f32 = 12.0;
+
+/// Default minimum OCR confidence threshold
+const DEFAULT_MIN_CONFIDENCE: f32 = 60.0;
+
+/// Strict confidence threshold for high precision
+const STRICT_MIN_CONFIDENCE: f32 = 80.0;
+
+/// Minimum search region clamp value
+const MIN_SEARCH_REGION: f32 = 5.0;
+
+/// Maximum search region clamp value
+const MAX_SEARCH_REGION: f32 = 50.0;
+
+/// Minimum confidence clamp value
+const MIN_CONFIDENCE_CLAMP: f32 = 0.0;
+
+/// Maximum confidence clamp value
+const MAX_CONFIDENCE_CLAMP: f32 = 100.0;
+
 /// Page number detection error types
 #[derive(Debug, Error)]
 pub enum PageNumberError {
@@ -47,9 +75,9 @@ pub struct PageNumberOptions {
 impl Default for PageNumberOptions {
     fn default() -> Self {
         Self {
-            search_region_percent: 10.0,
+            search_region_percent: DEFAULT_SEARCH_REGION_PERCENT,
             ocr_language: "jpn+eng".to_string(),
-            min_confidence: 60.0,
+            min_confidence: DEFAULT_MIN_CONFIDENCE,
             numbers_only: true,
             position_hint: None,
         }
@@ -66,7 +94,7 @@ impl PageNumberOptions {
     pub fn japanese() -> Self {
         Self {
             ocr_language: "jpn".to_string(),
-            search_region_percent: 12.0, // Slightly larger region for vertical text
+            search_region_percent: VERTICAL_SEARCH_REGION_PERCENT,
             ..Default::default()
         }
     }
@@ -82,7 +110,7 @@ impl PageNumberOptions {
     /// Create options with high confidence threshold
     pub fn strict() -> Self {
         Self {
-            min_confidence: 80.0,
+            min_confidence: STRICT_MIN_CONFIDENCE,
             ..Default::default()
         }
     }
@@ -97,7 +125,7 @@ pub struct PageNumberOptionsBuilder {
 impl PageNumberOptionsBuilder {
     /// Set search region (percentage of image height, clamped to 5-50)
     pub fn search_region_percent(mut self, percent: f32) -> Self {
-        self.options.search_region_percent = percent.clamp(5.0, 50.0);
+        self.options.search_region_percent = percent.clamp(MIN_SEARCH_REGION, MAX_SEARCH_REGION);
         self
     }
 
@@ -109,7 +137,7 @@ impl PageNumberOptionsBuilder {
 
     /// Set minimum confidence threshold (clamped to 0-100)
     pub fn min_confidence(mut self, confidence: f32) -> Self {
-        self.options.min_confidence = confidence.clamp(0.0, 100.0);
+        self.options.min_confidence = confidence.clamp(MIN_CONFIDENCE_CLAMP, MAX_CONFIDENCE_CLAMP);
         self
     }
 
