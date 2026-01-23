@@ -7,6 +7,38 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
 
+// ============================================================
+// Constants
+// ============================================================
+
+/// Default tile size for balanced performance
+const DEFAULT_TILE_SIZE: u32 = 400;
+
+/// Tile size for high quality processing (more VRAM)
+#[allow(dead_code)]
+const HIGH_QUALITY_TILE_SIZE: u32 = 512;
+
+/// Tile size for anime content optimization
+const ANIME_TILE_SIZE: u32 = 256;
+
+/// Tile size for low VRAM environments
+const LOW_VRAM_TILE_SIZE: u32 = 128;
+
+/// Default tile padding
+const DEFAULT_TILE_PADDING: u32 = 10;
+
+/// Minimum allowed tile size
+const MIN_TILE_SIZE: u32 = 64;
+
+/// Maximum allowed tile size
+const MAX_TILE_SIZE: u32 = 1024;
+
+/// Default scale factor
+const DEFAULT_SCALE: u32 = 2;
+
+/// Base VRAM for tile size calculation (4GB)
+const BASE_VRAM_MB: u64 = 4096;
+
 /// RealESRGAN error types
 #[derive(Debug, Error)]
 pub enum RealEsrganError {
@@ -64,10 +96,10 @@ pub struct RealEsrganOptions {
 impl Default for RealEsrganOptions {
     fn default() -> Self {
         Self {
-            scale: 2,
+            scale: DEFAULT_SCALE,
             model: RealEsrganModel::X4Plus,
-            tile_size: 400,
-            tile_padding: 10,
+            tile_size: DEFAULT_TILE_SIZE,
+            tile_padding: DEFAULT_TILE_PADDING,
             output_format: OutputFormat::Png,
             face_enhance: false,
             gpu_id: None,
@@ -87,8 +119,8 @@ impl RealEsrganOptions {
         Self {
             scale: 4,
             model: RealEsrganModel::X4Plus,
-            tile_size: 256,
-            fp16: false, // More accurate
+            tile_size: ANIME_TILE_SIZE, // Smaller tiles for quality
+            fp16: false,                // More accurate
             ..Default::default()
         }
     }
@@ -105,7 +137,7 @@ impl RealEsrganOptions {
     /// Create options for low VRAM (< 4GB)
     pub fn low_vram() -> Self {
         Self {
-            tile_size: 128,
+            tile_size: LOW_VRAM_TILE_SIZE,
             tile_padding: 8,
             fp16: true,
             ..Default::default()
@@ -134,7 +166,7 @@ impl RealEsrganOptionsBuilder {
 
     /// Set tile size for memory efficiency
     pub fn tile_size(mut self, size: u32) -> Self {
-        self.options.tile_size = size.clamp(64, 1024);
+        self.options.tile_size = size.clamp(MIN_TILE_SIZE, MAX_TILE_SIZE);
         self
     }
 
@@ -474,14 +506,11 @@ impl RealEsrgan {
     pub fn recommended_tile_size(&self, _image_size: (u32, u32), available_vram_mb: u64) -> u32 {
         // Empirical formula:
         // 4x upscale with FP16: ~100MB per 400x400 tile
-        let base_tile = 400;
-        let base_vram = 4096; // 4GB
-
-        let scale_factor = (available_vram_mb as f64 / base_vram as f64).sqrt();
-        let recommended = (base_tile as f64 * scale_factor) as u32;
+        let scale_factor = (available_vram_mb as f64 / BASE_VRAM_MB as f64).sqrt();
+        let recommended = (DEFAULT_TILE_SIZE as f64 * scale_factor) as u32;
 
         // Clamp to reasonable range
-        recommended.clamp(128, 1024)
+        recommended.clamp(MIN_TILE_SIZE, MAX_TILE_SIZE)
     }
 }
 
