@@ -300,12 +300,14 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
+    // TC-PDR-002: 存在しないファイル
     #[test]
     fn test_open_nonexistent_file() {
         let result = LopdfReader::new("/nonexistent/file.pdf");
         assert!(matches!(result, Err(PdfReaderError::FileNotFound(_))));
     }
 
+    // TC-PDR-003: 無効なPDFフォーマット
     #[test]
     fn test_open_invalid_pdf() {
         // Create a non-PDF file
@@ -321,6 +323,7 @@ mod tests {
 
     // PDF fixture tests
 
+    // TC-PDR-001: 正常なPDF読み込み
     #[test]
     fn test_open_valid_pdf() {
         let path = PathBuf::from("tests/fixtures/sample.pdf");
@@ -330,12 +333,14 @@ mod tests {
         assert_eq!(doc.info.path, path);
     }
 
+    // TC-PDR-004: ページ数取得
     #[test]
     fn test_page_count() {
         let doc = LopdfReader::new("tests/fixtures/10pages.pdf").unwrap();
         assert_eq!(doc.info.page_count, 10);
     }
 
+    // TC-PDR-005: ページサイズ取得
     #[test]
     fn test_page_dimensions() {
         let doc = LopdfReader::new("tests/fixtures/a4.pdf").unwrap();
@@ -346,6 +351,7 @@ mod tests {
         assert!((page.height_pt - 842.0).abs() < 1.0);
     }
 
+    // TC-PDR-006: メタデータ抽出
     #[test]
     fn test_metadata_extraction() {
         let doc = LopdfReader::new("tests/fixtures/with_metadata.pdf").unwrap();
@@ -355,6 +361,7 @@ mod tests {
         assert!(meta.author.is_some());
     }
 
+    // TC-PDR-007: 回転ページの検出
     #[test]
     fn test_rotated_page() {
         let doc = LopdfReader::new("tests/fixtures/rotated.pdf").unwrap();
@@ -363,6 +370,7 @@ mod tests {
         assert_eq!(page.rotation, 90);
     }
 
+    // TC-PDR-008: 暗号化PDF検出
     #[test]
     fn test_encrypted_pdf_detection() {
         let doc = LopdfReader::new("tests/fixtures/encrypted.pdf").unwrap();

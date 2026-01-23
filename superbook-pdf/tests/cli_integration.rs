@@ -1,6 +1,8 @@
 //! CLI Integration Tests
 //!
 //! Tests for the CLI interface using assert_cmd
+//!
+//! Spec Reference: specs/01-cli.spec.md
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -10,6 +12,7 @@ fn superbook_cmd() -> Command {
     Command::cargo_bin("superbook-pdf").unwrap()
 }
 
+// TC-CLI-001: ヘルプ表示
 #[test]
 fn test_help_command() {
     superbook_cmd()
@@ -21,6 +24,7 @@ fn test_help_command() {
         .stdout(predicate::str::contains("info"));
 }
 
+// TC-CLI-002: バージョン表示
 #[test]
 fn test_version_command() {
     superbook_cmd()
@@ -41,6 +45,17 @@ fn test_info_command() {
         .stdout(predicate::str::contains("Platform"));
 }
 
+// TC-CLI-003: 入力ファイルなしエラー（引数なしでconvertを呼び出し）
+#[test]
+fn test_convert_no_input_argument() {
+    superbook_cmd()
+        .args(["convert"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+// TC-CLI-004: 存在しないファイルエラー
 #[test]
 fn test_convert_missing_input() {
     superbook_cmd()
@@ -66,6 +81,7 @@ fn test_convert_dry_run_single_file() {
         .stdout(predicate::str::contains("Files to process: 1"));
 }
 
+// TC-CLI-005: ディレクトリ入力処理
 #[test]
 fn test_convert_dry_run_directory() {
     superbook_cmd()
@@ -76,6 +92,7 @@ fn test_convert_dry_run_directory() {
         .stdout(predicate::str::contains("Files to process:"));
 }
 
+// TC-CLI-006: オプション解析
 #[test]
 fn test_convert_dry_run_with_options() {
     superbook_cmd()
