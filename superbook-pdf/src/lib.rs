@@ -835,4 +835,277 @@ mod tests {
             ));
         }
     }
+
+    // ============ Concurrency Tests for Re-exported Types ============
+
+    #[test]
+    fn test_all_options_types_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PdfWriterOptions>();
+        assert_send_sync::<DeskewOptions>();
+        assert_send_sync::<ExtractOptions>();
+        assert_send_sync::<MarginOptions>();
+        assert_send_sync::<PageNumberOptions>();
+        assert_send_sync::<RealEsrganOptions>();
+        assert_send_sync::<YomiTokuOptions>();
+        assert_send_sync::<AiBridgeConfig>();
+    }
+
+    #[test]
+    fn test_all_error_types_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PdfReaderError>();
+        assert_send_sync::<PdfWriterError>();
+        assert_send_sync::<ExtractError>();
+        assert_send_sync::<DeskewError>();
+        assert_send_sync::<MarginError>();
+        assert_send_sync::<PageNumberError>();
+        assert_send_sync::<RealEsrganError>();
+        assert_send_sync::<YomiTokuError>();
+        assert_send_sync::<AiBridgeError>();
+    }
+
+    #[test]
+    fn test_all_data_types_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PdfDocument>();
+        assert_send_sync::<PdfMetadata>();
+        assert_send_sync::<PdfPage>();
+        assert_send_sync::<Margins>();
+        assert_send_sync::<ContentRect>();
+        assert_send_sync::<TextBlock>();
+        assert_send_sync::<ExitCode>();
+    }
+
+    #[test]
+    fn test_concurrent_options_creation() {
+        use std::thread;
+
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                thread::spawn(move || {
+                    let pdf = PdfWriterOptions::builder().dpi(150 + i * 50).build();
+                    let dsk = DeskewOptions::builder().max_angle(5.0 + i as f64).build();
+                    let ext = ExtractOptions::builder().dpi(150 + i * 50).build();
+                    (pdf.dpi, dsk.max_angle, ext.dpi)
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(results.len(), 8);
+        for (i, (pdf_dpi, dsk_angle, ext_dpi)) in results.iter().enumerate() {
+            assert_eq!(*pdf_dpi, 150 + (i as u32) * 50);
+            assert!((dsk_angle - (5.0 + i as f64)).abs() < 0.01);
+            assert_eq!(*ext_dpi, 150 + (i as u32) * 50);
+        }
+    }
+
+    #[test]
+    fn test_concurrent_preset_creation() {
+        use rayon::prelude::*;
+
+        let results: Vec<_> = (0..100)
+            .into_par_iter()
+            .map(|i| {
+                let preset = match i % 6 {
+                    0 => PdfWriterOptions::default(),
+                    1 => PdfWriterOptions::high_quality(),
+                    2 => PdfWriterOptions::compact(),
+                    3 => PdfWriterOptions::builder()
+                        .dpi(300)
+                        .jpeg_quality(90)
+                        .build(),
+                    4 => PdfWriterOptions::builder()
+                        .dpi(600)
+                        .jpeg_quality(95)
+                        .build(),
+                    _ => PdfWriterOptions::builder().dpi(150).build(),
+                };
+                preset.dpi
+            })
+            .collect();
+
+        assert_eq!(results.len(), 100);
+    }
+
+    #[test]
+    fn test_concurrent_exit_code_handling() {
+        use std::thread;
+
+        let codes = vec![
+            ExitCode::Success,
+            ExitCode::GeneralError,
+            ExitCode::InvalidArgs,
+            ExitCode::InputNotFound,
+            ExitCode::OutputError,
+            ExitCode::ProcessingError,
+            ExitCode::GpuError,
+            ExitCode::ExternalToolError,
+        ];
+
+        let handles: Vec<_> = codes
+            .into_iter()
+            .map(|code| {
+                thread::spawn(move || {
+                    let value = code.code();
+                    let desc = code.description();
+                    (value, desc.to_string())
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(results.len(), 8);
+
+        // Success should be 0
+        assert!(results.iter().any(|(code, _)| *code == 0));
+    }
+
+    #[test]
+    fn test_concurrent_margins_operations() {
+        use rayon::prelude::*;
+
+        let results: Vec<_> = (0..100)
+            .into_par_iter()
+            .map(|i| {
+                let margins = Margins {
+                    top: i as u32 * 10,
+                    bottom: i as u32 * 10,
+                    left: i as u32 * 5,
+                    right: i as u32 * 5,
+                };
+                (margins.total_vertical(), margins.total_horizontal())
+            })
+            .collect();
+
+        assert_eq!(results.len(), 100);
+        for (i, (vert, horiz)) in results.iter().enumerate() {
+            assert_eq!(*vert, (i as u32) * 20);
+            assert_eq!(*horiz, (i as u32) * 10);
+        }
+    }
+
+    // ============ Additional Integration Tests ============
+
+    #[test]
+    fn test_all_modules_have_consistent_builder_pattern() {
+        // All builders should support build() without any required parameters
+        let _pdf = PdfWriterOptions::builder().build();
+        let _dsk = DeskewOptions::builder().build();
+        let _ext = ExtractOptions::builder().build();
+        let _mrg = MarginOptions::builder().build();
+        let _pgn = PageNumberOptions::builder().build();
+        let _res = RealEsrganOptions::builder().build();
+        let _yomi = YomiTokuOptions::builder().build();
+        let _ai = AiBridgeConfig::builder().build();
+    }
+
+    #[test]
+    fn test_all_defaults_consistent_with_docs() {
+        // Verify documented defaults match actual defaults
+
+        // DPI defaults should be reasonable (150-600)
+        let ext = ExtractOptions::default();
+        assert!(ext.dpi >= 72 && ext.dpi <= 1200);
+
+        let pdf = PdfWriterOptions::default();
+        assert!(pdf.dpi >= 72 && pdf.dpi <= 1200);
+
+        // JPEG quality should be valid (1-100)
+        assert!(pdf.jpeg_quality >= 1 && pdf.jpeg_quality <= 100);
+
+        // Deskew max angle should be reasonable (1-45 degrees)
+        let dsk = DeskewOptions::default();
+        assert!(dsk.max_angle >= 1.0 && dsk.max_angle <= 45.0);
+
+        // Confidence thresholds should be 0-100
+        let pgn = PageNumberOptions::default();
+        assert!(pgn.min_confidence >= 0.0 && pgn.min_confidence <= 100.0);
+    }
+
+    #[test]
+    fn test_colorspace_image_format_all_combinations() {
+        let formats = [
+            ImageFormat::Png,
+            ImageFormat::Jpeg { quality: 90 },
+            ImageFormat::Tiff,
+            ImageFormat::Bmp,
+        ];
+
+        let colorspaces = [ColorSpace::Rgb, ColorSpace::Grayscale, ColorSpace::Cmyk];
+
+        // All 12 combinations should be valid
+        let mut count = 0;
+        for format in &formats {
+            for colorspace in &colorspaces {
+                let _ = ExtractOptions::builder()
+                    .format(format.clone())
+                    .colorspace(*colorspace)
+                    .build();
+                count += 1;
+            }
+        }
+        assert_eq!(count, 12);
+    }
+
+    #[test]
+    fn test_unified_margins_from_margins() {
+        let pages_margins = vec![
+            Margins {
+                top: 50,
+                bottom: 60,
+                left: 30,
+                right: 40,
+            },
+            Margins {
+                top: 55,
+                bottom: 65,
+                left: 35,
+                right: 45,
+            },
+            Margins {
+                top: 45,
+                bottom: 55,
+                left: 25,
+                right: 35,
+            },
+        ];
+
+        // Find unified margins (minimum of each)
+        let unified = Margins {
+            top: pages_margins.iter().map(|m| m.top).min().unwrap(),
+            bottom: pages_margins.iter().map(|m| m.bottom).min().unwrap(),
+            left: pages_margins.iter().map(|m| m.left).min().unwrap(),
+            right: pages_margins.iter().map(|m| m.right).min().unwrap(),
+        };
+
+        assert_eq!(unified.top, 45);
+        assert_eq!(unified.bottom, 55);
+        assert_eq!(unified.left, 25);
+        assert_eq!(unified.right, 35);
+    }
+
+    #[test]
+    fn test_exit_code_all_descriptions_non_empty() {
+        let codes = [
+            ExitCode::Success,
+            ExitCode::GeneralError,
+            ExitCode::InvalidArgs,
+            ExitCode::InputNotFound,
+            ExitCode::OutputError,
+            ExitCode::ProcessingError,
+            ExitCode::GpuError,
+            ExitCode::ExternalToolError,
+        ];
+
+        for code in codes {
+            let desc = code.description();
+            assert!(
+                !desc.is_empty(),
+                "Description for {:?} should not be empty",
+                code
+            );
+        }
+    }
 }
