@@ -816,4 +816,216 @@ mod tests {
 
         assert!(block.font_size.is_none());
     }
+
+    // Test TextBlock bbox boundary values
+    #[test]
+    fn test_text_block_bbox_boundaries() {
+        // Zero-size bbox
+        let zero_bbox = TextBlock {
+            text: "".to_string(),
+            bbox: (0, 0, 0, 0),
+            confidence: 0.0,
+            direction: TextDirection::Horizontal,
+            font_size: None,
+        };
+        assert_eq!(zero_bbox.bbox.2, 0); // width
+        assert_eq!(zero_bbox.bbox.3, 0); // height
+
+        // Large bbox
+        let large_bbox = TextBlock {
+            text: "Large".to_string(),
+            bbox: (0, 0, 10000, 15000),
+            confidence: 1.0,
+            direction: TextDirection::Vertical,
+            font_size: Some(72.0),
+        };
+        assert_eq!(large_bbox.bbox.2, 10000);
+        assert_eq!(large_bbox.bbox.3, 15000);
+    }
+
+    // Test confidence threshold edge cases
+    #[test]
+    fn test_confidence_threshold_edges() {
+        // Minimum confidence
+        let opts_min = YomiTokuOptions::builder().confidence_threshold(0.0).build();
+        assert_eq!(opts_min.confidence_threshold, 0.0);
+
+        // Maximum confidence
+        let opts_max = YomiTokuOptions::builder().confidence_threshold(1.0).build();
+        assert_eq!(opts_max.confidence_threshold, 1.0);
+
+        // Default confidence
+        let opts_default = YomiTokuOptions::default();
+        assert!(opts_default.confidence_threshold > 0.0);
+        assert!(opts_default.confidence_threshold <= 1.0);
+    }
+
+    // Test batch result with empty arrays
+    #[test]
+    fn test_batch_result_empty() {
+        let batch = BatchOcrResult {
+            successful: vec![],
+            failed: vec![],
+            total_time: Duration::ZERO,
+        };
+
+        assert!(batch.successful.is_empty());
+        assert!(batch.failed.is_empty());
+        assert_eq!(batch.total_time, Duration::ZERO);
+    }
+
+    // Test batch result all successful
+    #[test]
+    fn test_batch_result_all_successful() {
+        let results: Vec<OcrResult> = (0..5)
+            .map(|i| OcrResult {
+                input_path: PathBuf::from(format!("/page{}.png", i)),
+                text_blocks: vec![TextBlock {
+                    text: format!("Page {}", i),
+                    bbox: (0, 0, 100, 50),
+                    confidence: 0.9,
+                    direction: TextDirection::Horizontal,
+                    font_size: Some(12.0),
+                }],
+                confidence: 0.9,
+                processing_time: Duration::from_millis(100),
+                text_direction: TextDirection::Horizontal,
+            })
+            .collect();
+
+        let batch = BatchOcrResult {
+            successful: results,
+            failed: vec![],
+            total_time: Duration::from_millis(500),
+        };
+
+        assert_eq!(batch.successful.len(), 5);
+        assert!(batch.failed.is_empty());
+    }
+
+    // Test Language default
+    #[test]
+    fn test_language_default() {
+        let opts = YomiTokuOptions::default();
+        assert!(matches!(opts.language, Language::Japanese));
+    }
+
+    // Test OutputFormat default
+    #[test]
+    fn test_output_format_default() {
+        let opts = YomiTokuOptions::default();
+        assert!(matches!(opts.output_format, OutputFormat::Json));
+    }
+
+    // Test GPU configuration options
+    #[test]
+    fn test_gpu_configuration() {
+        // GPU disabled
+        let opts_no_gpu = YomiTokuOptions::builder().use_gpu(false).build();
+        assert!(!opts_no_gpu.use_gpu);
+        assert!(opts_no_gpu.gpu_id.is_none());
+
+        // GPU enabled with specific device
+        let opts_gpu = YomiTokuOptions::builder().use_gpu(true).gpu_id(1).build();
+        assert!(opts_gpu.use_gpu);
+        assert_eq!(opts_gpu.gpu_id, Some(1));
+    }
+
+    // Test text extraction with empty blocks
+    #[test]
+    fn test_extract_text_empty_blocks() {
+        let result = OcrResult {
+            input_path: PathBuf::from("/empty.png"),
+            text_blocks: vec![],
+            confidence: 0.0,
+            processing_time: Duration::ZERO,
+            text_direction: TextDirection::Horizontal,
+        };
+
+        let text = YomiToku::extract_text(&result);
+        assert!(text.is_empty());
+    }
+
+    // Test text extraction preserves order
+    #[test]
+    fn test_extract_text_preserves_order() {
+        let result = OcrResult {
+            input_path: PathBuf::from("/ordered.png"),
+            text_blocks: vec![
+                TextBlock {
+                    text: "First".to_string(),
+                    bbox: (0, 0, 50, 20),
+                    confidence: 0.9,
+                    direction: TextDirection::Horizontal,
+                    font_size: None,
+                },
+                TextBlock {
+                    text: "Second".to_string(),
+                    bbox: (0, 20, 50, 20),
+                    confidence: 0.9,
+                    direction: TextDirection::Horizontal,
+                    font_size: None,
+                },
+                TextBlock {
+                    text: "Third".to_string(),
+                    bbox: (0, 40, 50, 20),
+                    confidence: 0.9,
+                    direction: TextDirection::Horizontal,
+                    font_size: None,
+                },
+            ],
+            confidence: 0.9,
+            processing_time: Duration::from_millis(100),
+            text_direction: TextDirection::Horizontal,
+        };
+
+        let text = YomiToku::extract_text(&result);
+        assert!(text.contains("First"));
+        assert!(text.contains("Second"));
+        assert!(text.contains("Third"));
+        // Verify order: First appears before Second, Second before Third
+        let first_pos = text.find("First").unwrap();
+        let second_pos = text.find("Second").unwrap();
+        let third_pos = text.find("Third").unwrap();
+        assert!(first_pos < second_pos);
+        assert!(second_pos < third_pos);
+    }
+
+    // Test timeout configuration
+    #[test]
+    fn test_timeout_configuration() {
+        // Very short timeout
+        let opts_short = YomiTokuOptions::builder().timeout(1).build();
+        assert_eq!(opts_short.timeout_secs, 1);
+
+        // Very long timeout (24 hours)
+        let opts_long = YomiTokuOptions::builder().timeout(86400).build();
+        assert_eq!(opts_long.timeout_secs, 86400);
+    }
+
+    // Test all text directions in OcrResult
+    #[test]
+    fn test_all_text_directions() {
+        let directions = [
+            TextDirection::Horizontal,
+            TextDirection::Vertical,
+            TextDirection::Mixed,
+        ];
+
+        for dir in directions {
+            let result = OcrResult {
+                input_path: PathBuf::from("/test.png"),
+                text_blocks: vec![],
+                confidence: 0.5,
+                processing_time: Duration::from_secs(1),
+                text_direction: dir,
+            };
+            // Verify direction is set correctly
+            match result.text_direction {
+                TextDirection::Horizontal => assert!(matches!(dir, TextDirection::Horizontal)),
+                TextDirection::Vertical => assert!(matches!(dir, TextDirection::Vertical)),
+                TextDirection::Mixed => assert!(matches!(dir, TextDirection::Mixed)),
+            }
+        }
+    }
 }

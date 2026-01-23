@@ -485,4 +485,203 @@ mod tests {
         let code: std::process::ExitCode = ExitCode::GeneralError.into();
         let _ = code;
     }
+
+    // Test all exit codes
+    #[test]
+    fn test_all_exit_codes() {
+        let codes = [
+            (ExitCode::Success, 0),
+            (ExitCode::GeneralError, 1),
+            (ExitCode::InvalidArgs, 2),
+            (ExitCode::InputNotFound, 3),
+            (ExitCode::OutputError, 4),
+            (ExitCode::ProcessingError, 5),
+            (ExitCode::GpuError, 6),
+            (ExitCode::ExternalToolError, 7),
+        ];
+
+        for (exit_code, expected) in codes {
+            assert_eq!(exit_code.code(), expected);
+        }
+    }
+
+    // Test version command
+    #[test]
+    fn test_version_flag() {
+        // --version should trigger version output (handled by clap)
+        let result = Cli::try_parse_from(["superbook-pdf", "--version"]);
+        // clap returns an error for --version (it's a special flag)
+        assert!(result.is_err());
+    }
+
+    // Test help flag
+    #[test]
+    fn test_help_flag() {
+        let result = Cli::try_parse_from(["superbook-pdf", "--help"]);
+        // clap returns an error for --help (it's a special flag)
+        assert!(result.is_err());
+    }
+
+    // Test invalid command
+    #[test]
+    fn test_invalid_command() {
+        let result = Cli::try_parse_from(["superbook-pdf", "invalid-command"]);
+        assert!(result.is_err());
+    }
+
+    // Test missing required argument
+    #[test]
+    fn test_missing_input_file() {
+        let result = Cli::try_parse_from(["superbook-pdf", "convert"]);
+        assert!(result.is_err());
+    }
+
+    // Test negative DPI (invalid)
+    #[test]
+    fn test_invalid_dpi() {
+        let result =
+            Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "--dpi", "-100"]);
+        // Should fail parsing or validation
+        assert!(result.is_err());
+    }
+
+    // Test zero threads (explicitly set)
+    #[test]
+    fn test_zero_threads() {
+        let cli = Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "--threads", "0"])
+            .unwrap();
+
+        if let Commands::Convert(args) = cli.command {
+            // threads=0 is explicitly set, returned as-is
+            let count = args.thread_count();
+            // When Some(0) is provided, it returns 0
+            assert_eq!(count, 0);
+        } else {
+            panic!("Expected Convert command");
+        }
+    }
+
+    // Test very high thread count
+    #[test]
+    fn test_high_thread_count() {
+        let cli =
+            Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "--threads", "1024"])
+                .unwrap();
+
+        if let Commands::Convert(args) = cli.command {
+            assert_eq!(args.thread_count(), 1024);
+        } else {
+            panic!("Expected Convert command");
+        }
+    }
+
+    // Test output path argument (positional)
+    #[test]
+    fn test_output_path() {
+        let cli = Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "/custom/output"])
+            .unwrap();
+
+        if let Commands::Convert(args) = cli.command {
+            assert_eq!(args.output, PathBuf::from("/custom/output"));
+        } else {
+            panic!("Expected Convert command");
+        }
+    }
+
+    // Test default output path
+    #[test]
+    fn test_default_output_path() {
+        let cli = Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf"]).unwrap();
+
+        if let Commands::Convert(args) = cli.command {
+            // Default output is "./output"
+            assert_eq!(args.output, PathBuf::from("./output"));
+        } else {
+            panic!("Expected Convert command");
+        }
+    }
+
+    // Test margin trim boundary values
+    #[test]
+    fn test_margin_trim_boundaries() {
+        // Zero margin
+        let cli = Cli::try_parse_from([
+            "superbook-pdf",
+            "convert",
+            "input.pdf",
+            "--margin-trim",
+            "0.0",
+        ])
+        .unwrap();
+
+        if let Commands::Convert(args) = cli.command {
+            assert_eq!(args.margin_trim, 0.0);
+        } else {
+            panic!("Expected Convert command");
+        }
+
+        // Large margin
+        let cli = Cli::try_parse_from([
+            "superbook-pdf",
+            "convert",
+            "input.pdf",
+            "--margin-trim",
+            "10.0",
+        ])
+        .unwrap();
+
+        if let Commands::Convert(args) = cli.command {
+            assert_eq!(args.margin_trim, 10.0);
+        } else {
+            panic!("Expected Convert command");
+        }
+    }
+
+    // Test verbosity levels
+    #[test]
+    fn test_verbosity_levels() {
+        // No verbosity
+        let cli = Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf"]).unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert_eq!(args.verbose, 0);
+        }
+
+        // -v
+        let cli = Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "-v"]).unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert_eq!(args.verbose, 1);
+        }
+
+        // -vv
+        let cli = Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "-vv"]).unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert_eq!(args.verbose, 2);
+        }
+    }
+
+    // Test quiet flag
+    #[test]
+    fn test_quiet_flag() {
+        let cli =
+            Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "--quiet"]).unwrap();
+
+        if let Commands::Convert(args) = cli.command {
+            assert!(args.quiet);
+        } else {
+            panic!("Expected Convert command");
+        }
+    }
+
+    // Test dry-run flag
+    #[test]
+    fn test_dry_run_flag() {
+        let cli =
+            Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "--dry-run"]).unwrap();
+
+        if let Commands::Convert(args) = cli.command {
+            assert!(args.dry_run);
+        } else {
+            panic!("Expected Convert command");
+        }
+    }
 }
