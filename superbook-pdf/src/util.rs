@@ -5,6 +5,11 @@
 use image::DynamicImage;
 use std::path::Path;
 
+/// Millimeters per inch (exactly 25.4)
+const MM_PER_INCH: f32 = 25.4;
+/// Points per inch (PDF standard: 72 points = 1 inch)
+const POINTS_PER_INCH: f64 = 72.0;
+
 /// Load an image from path with consistent error handling
 pub fn load_image<P: AsRef<Path>>(path: P) -> Result<DynamicImage, String> {
     let path = path.as_ref();
@@ -45,25 +50,25 @@ pub fn ensure_dir_writable<P: AsRef<Path>>(path: P) -> Result<(), String> {
 /// Convert pixels to millimeters at given DPI
 #[inline]
 pub fn pixels_to_mm(pixels: u32, dpi: u32) -> f32 {
-    (pixels as f32 / dpi as f32) * 25.4
+    (pixels as f32 / dpi as f32) * MM_PER_INCH
 }
 
 /// Convert millimeters to pixels at given DPI
 #[inline]
 pub fn mm_to_pixels(mm: f32, dpi: u32) -> u32 {
-    (mm * dpi as f32 / 25.4) as u32
+    (mm * dpi as f32 / MM_PER_INCH) as u32
 }
 
 /// Convert points to millimeters
 #[inline]
 pub fn points_to_mm(points: f64) -> f32 {
-    (points / 72.0 * 25.4) as f32
+    (points / POINTS_PER_INCH * MM_PER_INCH as f64) as f32
 }
 
 /// Convert millimeters to points
 #[inline]
 pub fn mm_to_points(mm: f32) -> f64 {
-    (mm as f64 / 25.4) * 72.0
+    (mm as f64 / MM_PER_INCH as f64) * POINTS_PER_INCH
 }
 
 /// Format file size in human-readable format

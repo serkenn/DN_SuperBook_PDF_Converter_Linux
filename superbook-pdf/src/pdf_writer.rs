@@ -30,6 +30,9 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+/// Conversion factor: 1 point = 0.352_778 mm (1/72 inch ≈ 25.4/72)
+const POINTS_TO_MM: f32 = 0.352_778;
+
 /// PDF writing error types
 #[derive(Debug, Error)]
 pub enum PdfWriterError {
@@ -379,11 +382,11 @@ impl PrintPdfWriter {
             .map_err(|e| PdfWriterError::GenerationError(e.to_string()))?;
 
         for block in &page_text.blocks {
-            // Convert points to mm (1 point = 0.3527777... mm)
-            let x_mm = block.x as f32 * 0.352778;
+            // Convert points to mm
+            let x_mm = block.x as f32 * POINTS_TO_MM;
             // PDF coordinate system has origin at bottom-left, so flip y
             let y_mm =
-                page_height_mm - (block.y as f32 * 0.352778) - (block.height as f32 * 0.352778);
+                page_height_mm - (block.y as f32 * POINTS_TO_MM) - (block.height as f32 * POINTS_TO_MM);
             let font_size_pt = block.font_size as f32;
 
             // Set text rendering mode to invisible (mode 3)
