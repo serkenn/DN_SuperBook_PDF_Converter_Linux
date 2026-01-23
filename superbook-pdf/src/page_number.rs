@@ -1811,4 +1811,304 @@ mod tests {
         assert_eq!(results.len(), 5);
         assert!(results[0].contains("BottomCenter"));
     }
+
+    // ============ Additional Concurrency Tests ============
+
+    #[test]
+    fn test_all_types_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PageNumberOptions>();
+        assert_send_sync::<PageNumberPosition>();
+        assert_send_sync::<DetectedPageNumber>();
+        assert_send_sync::<OffsetCorrection>();
+        assert_send_sync::<PageNumberError>();
+    }
+
+    #[test]
+    fn test_concurrent_options_building_parallel() {
+        use std::thread;
+
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                thread::spawn(move || {
+                    PageNumberOptions::builder()
+                        .search_region_percent(10.0 + (i as f32))
+                        .min_confidence(50.0 + (i as f32 * 5.0))
+                        .numbers_only(i % 2 == 0)
+                        .build()
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(results.len(), 8);
+        for (i, opts) in results.iter().enumerate() {
+            assert!((opts.search_region_percent - (10.0 + i as f32)).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_concurrent_detected_page_numbers() {
+        use rayon::prelude::*;
+
+        let numbers: Vec<_> = (1..=100)
+            .into_par_iter()
+            .map(|i| DetectedPageNumber {
+                page_index: i - 1,
+                number: Some(i as i32),
+                confidence: 0.85 + (i as f32 * 0.001),
+                position: PageNumberRect {
+                    x: 10,
+                    y: 20 + i as u32,
+                    width: 50,
+                    height: 30,
+                },
+                raw_text: format!("{}", i),
+            })
+            .collect();
+
+        assert_eq!(numbers.len(), 100);
+        for (i, num) in numbers.iter().enumerate() {
+            assert_eq!(num.page_index, i);
+            assert_eq!(num.number, Some((i + 1) as i32));
+        }
+    }
+
+    #[test]
+    fn test_concurrent_offset_correction_creation() {
+        use std::thread;
+
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                thread::spawn(move || OffsetCorrection {
+                    page_offsets: vec![(i, (i as i32) * 10)],
+                    unified_offset: (i as i32) * 5,
+                })
+            })
+            .collect();
+
+        let results: Vec<OffsetCorrection> =
+            handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(results.len(), 8);
+        for (i, offset) in results.iter().enumerate() {
+            assert_eq!(offset.page_offsets.len(), 1);
+            assert_eq!(offset.unified_offset, (i as i32) * 5);
+        }
+    }
+
+    #[test]
+    fn test_parallel_error_creation() {
+        use rayon::prelude::*;
+
+        let errors: Vec<_> = (0..50)
+            .into_par_iter()
+            .map(|i| match i % 4 {
+                0 => PageNumberError::ImageNotFound(PathBuf::from(format!("/img_{}.png", i))),
+                1 => PageNumberError::OcrFailed(format!("OCR error {}", i)),
+                2 => PageNumberError::NoPageNumbersDetected,
+                _ => PageNumberError::InconsistentPageNumbers,
+            })
+            .collect();
+
+        assert_eq!(errors.len(), 50);
+    }
+
+    // ============ Additional Boundary Tests ============
+
+    #[test]
+    fn test_search_region_boundary_minimum() {
+        let opts = PageNumberOptions::builder()
+            .search_region_percent(1.0) // Below minimum
+            .build();
+        assert_eq!(opts.search_region_percent, MIN_SEARCH_REGION);
+    }
+
+    #[test]
+    fn test_search_region_boundary_maximum() {
+        let opts = PageNumberOptions::builder()
+            .search_region_percent(100.0) // Above maximum
+            .build();
+        assert_eq!(opts.search_region_percent, MAX_SEARCH_REGION);
+    }
+
+    #[test]
+    fn test_confidence_boundary_minimum() {
+        let opts = PageNumberOptions::builder()
+            .min_confidence(-10.0) // Below minimum
+            .build();
+        assert_eq!(opts.min_confidence, MIN_CONFIDENCE_CLAMP);
+    }
+
+    #[test]
+    fn test_confidence_boundary_maximum() {
+        let opts = PageNumberOptions::builder()
+            .min_confidence(150.0) // Above maximum
+            .build();
+        assert_eq!(opts.min_confidence, MAX_CONFIDENCE_CLAMP);
+    }
+
+    #[test]
+    fn test_detected_number_page_index_zero() {
+        let num = DetectedPageNumber {
+            page_index: 0,
+            number: Some(1),
+            confidence: 0.95,
+            position: PageNumberRect {
+                x: 0,
+                y: 0,
+                width: 50,
+                height: 20,
+            },
+            raw_text: "1".to_string(),
+        };
+        assert_eq!(num.page_index, 0);
+    }
+
+    #[test]
+    fn test_detected_number_large_page_index() {
+        let num = DetectedPageNumber {
+            page_index: 10000,
+            number: Some(10001),
+            confidence: 0.90,
+            position: PageNumberRect {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 50,
+            },
+            raw_text: "10001".to_string(),
+        };
+        assert_eq!(num.page_index, 10000);
+    }
+
+    #[test]
+    fn test_offset_correction_zero() {
+        let offset = OffsetCorrection {
+            page_offsets: vec![(0, 0)],
+            unified_offset: 0,
+        };
+        assert_eq!(offset.unified_offset, 0);
+        assert_eq!(offset.page_offsets[0].1, 0);
+    }
+
+    #[test]
+    fn test_offset_correction_negative() {
+        let offset = OffsetCorrection {
+            page_offsets: vec![(5, -100)],
+            unified_offset: -50,
+        };
+        assert_eq!(offset.page_offsets[0].1, -100);
+        assert_eq!(offset.unified_offset, -50);
+    }
+
+    #[test]
+    fn test_offset_correction_large_positive() {
+        let offset = OffsetCorrection {
+            page_offsets: vec![(0, i32::MAX)],
+            unified_offset: i32::MAX,
+        };
+        assert_eq!(offset.page_offsets[0].1, i32::MAX);
+        assert_eq!(offset.unified_offset, i32::MAX);
+    }
+
+    #[test]
+    fn test_offset_correction_large_negative() {
+        let offset = OffsetCorrection {
+            page_offsets: vec![(0, i32::MIN)],
+            unified_offset: i32::MIN,
+        };
+        assert_eq!(offset.page_offsets[0].1, i32::MIN);
+        assert_eq!(offset.unified_offset, i32::MIN);
+    }
+
+    #[test]
+    fn test_all_position_variants() {
+        let positions = [
+            PageNumberPosition::BottomCenter,
+            PageNumberPosition::BottomOutside,
+            PageNumberPosition::BottomInside,
+            PageNumberPosition::TopCenter,
+            PageNumberPosition::TopOutside,
+        ];
+        assert_eq!(positions.len(), 5);
+    }
+
+    #[test]
+    fn test_confidence_precision() {
+        let num = DetectedPageNumber {
+            page_index: 0,
+            number: Some(1),
+            confidence: 0.999999,
+            position: PageNumberRect {
+                x: 0,
+                y: 0,
+                width: 50,
+                height: 20,
+            },
+            raw_text: "1".to_string(),
+        };
+        assert!((num.confidence - 0.999999).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_position_rect_zero_size() {
+        let rect = PageNumberRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        };
+        assert_eq!(rect.x, 0);
+        assert_eq!(rect.y, 0);
+        assert_eq!(rect.width, 0);
+        assert_eq!(rect.height, 0);
+    }
+
+    #[test]
+    fn test_position_rect_large_values() {
+        let rect = PageNumberRect {
+            x: u32::MAX - 100,
+            y: u32::MAX - 100,
+            width: 100,
+            height: 100,
+        };
+        assert_eq!(rect.x, u32::MAX - 100);
+        assert_eq!(rect.y, u32::MAX - 100);
+    }
+
+    #[test]
+    fn test_error_messages_content() {
+        let path = PathBuf::from("/test/image.png");
+        let err = PageNumberError::ImageNotFound(path.clone());
+        assert!(err.to_string().contains("/test/image.png"));
+
+        let ocr_err = PageNumberError::OcrFailed("Tesseract initialization failed".to_string());
+        assert!(ocr_err.to_string().contains("Tesseract"));
+
+        let no_num_err = PageNumberError::NoPageNumbersDetected;
+        assert!(no_num_err.to_string().contains("detected"));
+
+        let inconsistent_err = PageNumberError::InconsistentPageNumbers;
+        assert!(inconsistent_err.to_string().contains("Inconsistent"));
+    }
+
+    #[test]
+    fn test_ocr_language_unicode() {
+        let opts = PageNumberOptions::builder().ocr_language("日本語").build();
+        assert_eq!(opts.ocr_language, "日本語");
+    }
+
+    #[test]
+    fn test_options_clone_deep() {
+        let opts = PageNumberOptions::builder()
+            .search_region_percent(15.0)
+            .min_confidence(70.0)
+            .numbers_only(false)
+            .build();
+
+        let cloned = opts.clone();
+        assert_eq!(cloned.search_region_percent, opts.search_region_percent);
+        assert_eq!(cloned.min_confidence, opts.min_confidence);
+        assert_eq!(cloned.numbers_only, opts.numbers_only);
+    }
 }

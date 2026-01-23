@@ -1449,4 +1449,302 @@ mod tests {
             .count();
         assert!(encrypted_count > 0);
     }
+
+    // ============ Additional Concurrency Tests ============
+
+    #[test]
+    fn test_all_types_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PdfDocument>();
+        assert_send_sync::<PdfMetadata>();
+        assert_send_sync::<PdfPage>();
+        assert_send_sync::<PdfReaderError>();
+        assert_send_sync::<LopdfReader>();
+    }
+
+    #[test]
+    fn test_concurrent_metadata_creation() {
+        use std::thread;
+
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                thread::spawn(move || PdfMetadata {
+                    title: Some(format!("Title {}", i)),
+                    author: Some(format!("Author {}", i)),
+                    subject: Some(format!("Subject {}", i)),
+                    keywords: Some(format!("keyword{}", i)),
+                    creator: Some("Creator".to_string()),
+                    producer: Some("Producer".to_string()),
+                    creation_date: Some("2024-01-01".to_string()),
+                    modification_date: Some("2024-12-01".to_string()),
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(results.len(), 8);
+        for (i, meta) in results.iter().enumerate() {
+            assert_eq!(meta.title, Some(format!("Title {}", i)));
+        }
+    }
+
+    #[test]
+    fn test_concurrent_page_creation() {
+        use rayon::prelude::*;
+
+        let pages: Vec<_> = (0..100)
+            .into_par_iter()
+            .map(|i| PdfPage {
+                index: i,
+                width_pt: 595.0 + (i as f64 * 0.1),
+                height_pt: 842.0 + (i as f64 * 0.1),
+                rotation: (i % 4 * 90) as u16,
+                has_images: i % 2 == 0,
+                has_text: i % 3 != 0,
+            })
+            .collect();
+
+        assert_eq!(pages.len(), 100);
+        for (i, page) in pages.iter().enumerate() {
+            assert_eq!(page.index, i);
+            assert_eq!(page.rotation, (i % 4 * 90) as u16);
+        }
+    }
+
+    #[test]
+    fn test_pdf_page_thread_transfer() {
+        use std::thread;
+
+        let page = PdfPage {
+            index: 42,
+            width_pt: 612.0,
+            height_pt: 792.0,
+            rotation: 90,
+            has_images: true,
+            has_text: true,
+        };
+
+        let handle = thread::spawn(move || {
+            assert_eq!(page.index, 42);
+            assert_eq!(page.rotation, 90);
+            page.width_pt + page.height_pt
+        });
+
+        let result = handle.join().unwrap();
+        assert!((result - 1404.0).abs() < 0.01);
+    }
+
+    // ============ Additional Boundary Tests ============
+
+    #[test]
+    fn test_page_dimensions_zero() {
+        let page = PdfPage {
+            index: 0,
+            width_pt: 0.0,
+            height_pt: 0.0,
+            rotation: 0,
+            has_images: false,
+            has_text: false,
+        };
+        assert_eq!(page.width_pt, 0.0);
+        assert_eq!(page.height_pt, 0.0);
+    }
+
+    #[test]
+    fn test_page_dimensions_large() {
+        // Poster size (A0 in points: 2384 x 3370)
+        let page = PdfPage {
+            index: 0,
+            width_pt: 2384.0,
+            height_pt: 3370.0,
+            rotation: 0,
+            has_images: true,
+            has_text: true,
+        };
+        assert!(page.width_pt > 2000.0);
+        assert!(page.height_pt > 3000.0);
+    }
+
+    #[test]
+    fn test_page_rotation_all_values() {
+        let rotations = [0u16, 90, 180, 270];
+        for &rot in &rotations {
+            let page = PdfPage {
+                index: 0,
+                width_pt: 595.0,
+                height_pt: 842.0,
+                rotation: rot,
+                has_images: false,
+                has_text: false,
+            };
+            assert_eq!(page.rotation, rot);
+        }
+    }
+
+    #[test]
+    fn test_page_index_maximum() {
+        let page = PdfPage {
+            index: usize::MAX,
+            width_pt: 595.0,
+            height_pt: 842.0,
+            rotation: 0,
+            has_images: false,
+            has_text: false,
+        };
+        assert_eq!(page.index, usize::MAX);
+    }
+
+    #[test]
+    fn test_metadata_all_fields_none() {
+        let meta = PdfMetadata::default();
+        assert!(meta.title.is_none());
+        assert!(meta.author.is_none());
+        assert!(meta.subject.is_none());
+        assert!(meta.keywords.is_none());
+        assert!(meta.creator.is_none());
+        assert!(meta.producer.is_none());
+        assert!(meta.creation_date.is_none());
+        assert!(meta.modification_date.is_none());
+    }
+
+    #[test]
+    fn test_metadata_all_fields_some() {
+        let meta = PdfMetadata {
+            title: Some("Title".to_string()),
+            author: Some("Author".to_string()),
+            subject: Some("Subject".to_string()),
+            keywords: Some("key1, key2".to_string()),
+            creator: Some("Creator".to_string()),
+            producer: Some("Producer".to_string()),
+            creation_date: Some("D:20240101120000".to_string()),
+            modification_date: Some("D:20241201120000".to_string()),
+        };
+        assert!(meta.title.is_some());
+        assert!(meta.author.is_some());
+        assert!(meta.subject.is_some());
+        assert!(meta.keywords.is_some());
+        assert!(meta.creator.is_some());
+        assert!(meta.producer.is_some());
+        assert!(meta.creation_date.is_some());
+        assert!(meta.modification_date.is_some());
+    }
+
+    #[test]
+    fn test_metadata_unicode_content() {
+        let meta = PdfMetadata {
+            title: Some("日本語タイトル".to_string()),
+            author: Some("著者名".to_string()),
+            subject: Some("主題".to_string()),
+            keywords: Some("キーワード1, キーワード2".to_string()),
+            creator: Some("作成者".to_string()),
+            producer: Some("プロデューサー".to_string()),
+            creation_date: None,
+            modification_date: None,
+        };
+        assert!(meta.title.as_ref().unwrap().contains("日本語"));
+        assert!(meta.author.as_ref().unwrap().contains("著者"));
+    }
+
+    #[test]
+    fn test_document_zero_pages_boundary() {
+        let doc = PdfDocument {
+            path: PathBuf::from("empty.pdf"),
+            page_count: 0,
+            pages: vec![],
+            metadata: PdfMetadata::default(),
+            is_encrypted: false,
+        };
+        assert_eq!(doc.page_count, 0);
+        assert!(doc.pages.is_empty());
+    }
+
+    #[test]
+    fn test_document_many_pages_boundary() {
+        let pages: Vec<PdfPage> = (0..1000)
+            .map(|i| PdfPage {
+                index: i,
+                width_pt: 595.0,
+                height_pt: 842.0,
+                rotation: 0,
+                has_images: true,
+                has_text: true,
+            })
+            .collect();
+
+        let doc = PdfDocument {
+            path: PathBuf::from("large.pdf"),
+            page_count: 1000,
+            pages,
+            metadata: PdfMetadata::default(),
+            is_encrypted: false,
+        };
+        assert_eq!(doc.page_count, 1000);
+        assert_eq!(doc.pages.len(), 1000);
+    }
+
+    #[test]
+    fn test_error_file_not_found_path_content() {
+        let path = PathBuf::from("/nonexistent/path/file.pdf");
+        let error = PdfReaderError::FileNotFound(path.clone());
+        let msg = error.to_string();
+        assert!(msg.contains("/nonexistent/path/file.pdf"));
+    }
+
+    #[test]
+    fn test_error_invalid_format_message_content() {
+        let error = PdfReaderError::InvalidFormat("magic bytes mismatch".to_string());
+        let msg = error.to_string();
+        assert!(msg.contains("magic bytes mismatch"));
+    }
+
+    #[test]
+    fn test_page_standard_sizes() {
+        // A4 (595.28 x 841.89 points)
+        let a4 = PdfPage {
+            index: 0,
+            width_pt: 595.28,
+            height_pt: 841.89,
+            rotation: 0,
+            has_images: false,
+            has_text: true,
+        };
+        assert!((a4.width_pt - 595.28).abs() < 0.01);
+
+        // Letter (612 x 792 points)
+        let letter = PdfPage {
+            index: 1,
+            width_pt: 612.0,
+            height_pt: 792.0,
+            rotation: 0,
+            has_images: false,
+            has_text: true,
+        };
+        assert_eq!(letter.width_pt, 612.0);
+    }
+
+    #[test]
+    fn test_document_clone() {
+        let doc = PdfDocument {
+            path: PathBuf::from("test.pdf"),
+            page_count: 5,
+            pages: vec![PdfPage {
+                index: 0,
+                width_pt: 595.0,
+                height_pt: 842.0,
+                rotation: 0,
+                has_images: true,
+                has_text: true,
+            }],
+            metadata: PdfMetadata {
+                title: Some("Test".to_string()),
+                ..Default::default()
+            },
+            is_encrypted: false,
+        };
+
+        let cloned = doc.clone();
+        assert_eq!(cloned.page_count, doc.page_count);
+        assert_eq!(cloned.path, doc.path);
+        assert_eq!(cloned.metadata.title, doc.metadata.title);
+    }
 }
