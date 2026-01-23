@@ -1206,4 +1206,295 @@ mod tests {
             .build();
         assert_eq!(long.timeout, Duration::from_secs(86400));
     }
+
+    // Additional comprehensive tests
+
+    #[test]
+    fn test_config_debug_impl() {
+        let config = AiBridgeConfig::builder().venv_path("/test").build();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("AiBridgeConfig"));
+        assert!(debug_str.contains("test"));
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let original = AiBridgeConfig::builder()
+            .venv_path("/cloned")
+            .gpu_enabled(false)
+            .max_retries(5)
+            .build();
+        let cloned = original.clone();
+        assert_eq!(cloned.venv_path, original.venv_path);
+        assert_eq!(cloned.gpu_config.enabled, original.gpu_config.enabled);
+        assert_eq!(
+            cloned.retry_config.max_retries,
+            original.retry_config.max_retries
+        );
+    }
+
+    #[test]
+    fn test_gpu_config_debug_impl() {
+        let config = GpuConfig {
+            enabled: true,
+            device_id: Some(0),
+            max_vram_mb: Some(4096),
+            tile_size: Some(256),
+        };
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("GpuConfig"));
+        assert!(debug_str.contains("4096"));
+    }
+
+    #[test]
+    fn test_gpu_config_clone() {
+        let original = GpuConfig {
+            enabled: true,
+            device_id: Some(1),
+            max_vram_mb: Some(8192),
+            tile_size: Some(512),
+        };
+        let cloned = original.clone();
+        assert_eq!(cloned.enabled, original.enabled);
+        assert_eq!(cloned.device_id, original.device_id);
+        assert_eq!(cloned.max_vram_mb, original.max_vram_mb);
+    }
+
+    #[test]
+    fn test_retry_config_debug_impl() {
+        let config = RetryConfig {
+            max_retries: 5,
+            retry_interval: Duration::from_secs(10),
+            exponential_backoff: true,
+        };
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("RetryConfig"));
+        assert!(debug_str.contains("5"));
+    }
+
+    #[test]
+    fn test_retry_config_clone() {
+        let original = RetryConfig {
+            max_retries: 7,
+            retry_interval: Duration::from_secs(30),
+            exponential_backoff: false,
+        };
+        let cloned = original.clone();
+        assert_eq!(cloned.max_retries, original.max_retries);
+        assert_eq!(cloned.retry_interval, original.retry_interval);
+        assert_eq!(cloned.exponential_backoff, original.exponential_backoff);
+    }
+
+    #[test]
+    fn test_process_status_debug_impl() {
+        let status = ProcessStatus::Running { progress: 0.5 };
+        let debug_str = format!("{:?}", status);
+        assert!(debug_str.contains("Running"));
+        assert!(debug_str.contains("0.5"));
+    }
+
+    #[test]
+    fn test_ai_task_result_debug_impl() {
+        let result = AiTaskResult {
+            processed_files: vec![PathBuf::from("test.png")],
+            skipped_files: vec![],
+            failed_files: vec![],
+            duration: Duration::from_secs(1),
+            gpu_stats: None,
+        };
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("AiTaskResult"));
+    }
+
+    #[test]
+    fn test_gpu_stats_debug_impl() {
+        let stats = GpuStats {
+            peak_vram_mb: 3000,
+            avg_utilization: 75.0,
+        };
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("GpuStats"));
+        assert!(debug_str.contains("3000"));
+    }
+
+    #[test]
+    fn test_error_debug_impl() {
+        let err = AiBridgeError::OutOfMemory;
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("OutOfMemory"));
+    }
+
+    #[test]
+    fn test_ai_tool_debug_impl() {
+        let tool = AiTool::RealESRGAN;
+        let debug_str = format!("{:?}", tool);
+        assert!(debug_str.contains("RealESRGAN"));
+    }
+
+    #[test]
+    fn test_ai_tool_clone() {
+        let original = AiTool::YomiToku;
+        let cloned = original.clone();
+        assert_eq!(cloned.module_name(), original.module_name());
+    }
+
+    #[test]
+    fn test_log_level_debug_impl() {
+        let level = LogLevel::Debug;
+        let debug_str = format!("{:?}", level);
+        assert!(debug_str.contains("Debug"));
+    }
+
+    #[test]
+    fn test_log_level_clone() {
+        let original = LogLevel::Warn;
+        let cloned = original.clone();
+        assert!(matches!(cloned, LogLevel::Warn));
+    }
+
+    #[test]
+    fn test_error_io_conversion() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let bridge_err: AiBridgeError = io_err.into();
+        let msg = bridge_err.to_string().to_lowercase();
+        assert!(msg.contains("io") || msg.contains("error"));
+    }
+
+    #[test]
+    fn test_builder_default_produces_valid_config() {
+        let config = AiBridgeConfigBuilder::default().build();
+        assert!(!config.venv_path.as_os_str().is_empty());
+        assert!(config.timeout.as_secs() > 0);
+    }
+
+    #[test]
+    fn test_ai_task_result_all_empty() {
+        let result = AiTaskResult {
+            processed_files: vec![],
+            skipped_files: vec![],
+            failed_files: vec![],
+            duration: Duration::ZERO,
+            gpu_stats: None,
+        };
+
+        assert!(result.processed_files.is_empty());
+        assert!(result.skipped_files.is_empty());
+        assert!(result.failed_files.is_empty());
+        assert_eq!(result.duration, Duration::ZERO);
+    }
+
+    #[test]
+    fn test_path_types_in_result() {
+        // Absolute paths
+        let result_abs = AiTaskResult {
+            processed_files: vec![PathBuf::from("/absolute/path.png")],
+            skipped_files: vec![],
+            failed_files: vec![],
+            duration: Duration::from_secs(1),
+            gpu_stats: None,
+        };
+        assert!(result_abs.processed_files[0].is_absolute());
+
+        // Relative paths
+        let result_rel = AiTaskResult {
+            processed_files: vec![PathBuf::from("relative/path.png")],
+            skipped_files: vec![],
+            failed_files: vec![],
+            duration: Duration::from_secs(1),
+            gpu_stats: None,
+        };
+        assert!(result_rel.processed_files[0].is_relative());
+    }
+
+    #[test]
+    fn test_preset_configs_consistency() {
+        let cpu = AiBridgeConfig::cpu_only();
+        let low_vram = AiBridgeConfig::low_vram();
+        let default_config = AiBridgeConfig::default();
+
+        // CPU only should have GPU disabled
+        assert!(!cpu.gpu_config.enabled);
+
+        // Low VRAM should have smaller tile size than default
+        assert!(low_vram.gpu_config.tile_size < default_config.gpu_config.tile_size);
+
+        // Low VRAM should have max_vram set
+        assert!(low_vram.gpu_config.max_vram_mb.is_some());
+    }
+
+    #[test]
+    fn test_gpu_utilization_range() {
+        for i in 0..=10 {
+            let util = i as f32 * 10.0;
+            let stats = GpuStats {
+                peak_vram_mb: 1000,
+                avg_utilization: util,
+            };
+            assert!(stats.avg_utilization >= 0.0 && stats.avg_utilization <= 100.0);
+        }
+    }
+
+    #[test]
+    fn test_error_variants_all() {
+        let errors: Vec<AiBridgeError> = vec![
+            AiBridgeError::VenvNotFound(PathBuf::from("/test")),
+            AiBridgeError::GpuNotAvailable,
+            AiBridgeError::OutOfMemory,
+            AiBridgeError::ProcessFailed("test".to_string()),
+            AiBridgeError::Timeout(Duration::from_secs(60)),
+            AiBridgeError::RetriesExhausted,
+            AiBridgeError::ToolNotInstalled(AiTool::RealESRGAN),
+            std::io::Error::new(std::io::ErrorKind::Other, "io").into(),
+        ];
+
+        for err in errors {
+            let msg = err.to_string();
+            assert!(!msg.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_process_status_all_variants() {
+        let statuses = vec![
+            ProcessStatus::Preparing,
+            ProcessStatus::Running { progress: 0.5 },
+            ProcessStatus::Completed {
+                duration: Duration::from_secs(1),
+            },
+            ProcessStatus::Failed {
+                error: "test".to_string(),
+                retries: 1,
+            },
+            ProcessStatus::TimedOut,
+            ProcessStatus::Cancelled,
+        ];
+
+        for status in statuses {
+            let debug_str = format!("{:?}", status);
+            assert!(!debug_str.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_venv_path_extraction() {
+        let path = PathBuf::from("/my/venv/path");
+        let err = AiBridgeError::VenvNotFound(path.clone());
+
+        if let AiBridgeError::VenvNotFound(p) = err {
+            assert_eq!(p, path);
+        } else {
+            panic!("Wrong error variant");
+        }
+    }
+
+    #[test]
+    fn test_tool_not_installed_extraction() {
+        let err = AiBridgeError::ToolNotInstalled(AiTool::YomiToku);
+
+        if let AiBridgeError::ToolNotInstalled(tool) = err {
+            assert_eq!(tool.module_name(), "yomitoku");
+        } else {
+            panic!("Wrong error variant");
+        }
+    }
 }

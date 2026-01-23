@@ -1028,4 +1028,342 @@ mod tests {
             }
         }
     }
+
+    // Additional comprehensive tests
+
+    #[test]
+    fn test_options_debug_impl() {
+        let options = YomiTokuOptions::builder().confidence_threshold(0.8).build();
+        let debug_str = format!("{:?}", options);
+        assert!(debug_str.contains("YomiTokuOptions"));
+        assert!(debug_str.contains("0.8"));
+    }
+
+    #[test]
+    fn test_options_clone() {
+        let original = YomiTokuOptions::builder()
+            .use_gpu(false)
+            .confidence_threshold(0.7)
+            .language(Language::Korean)
+            .build();
+        let cloned = original.clone();
+        assert_eq!(cloned.use_gpu, original.use_gpu);
+        assert_eq!(cloned.confidence_threshold, original.confidence_threshold);
+        assert!(matches!(cloned.language, Language::Korean));
+    }
+
+    #[test]
+    fn test_text_block_debug_impl() {
+        let block = TextBlock {
+            text: "テスト".to_string(),
+            bbox: (10, 20, 30, 40),
+            confidence: 0.95,
+            direction: TextDirection::Vertical,
+            font_size: Some(14.0),
+        };
+        let debug_str = format!("{:?}", block);
+        assert!(debug_str.contains("TextBlock"));
+        assert!(debug_str.contains("テスト"));
+    }
+
+    #[test]
+    fn test_text_block_clone() {
+        let original = TextBlock {
+            text: "Clone test".to_string(),
+            bbox: (0, 0, 100, 50),
+            confidence: 0.9,
+            direction: TextDirection::Horizontal,
+            font_size: Some(12.0),
+        };
+        let cloned = original.clone();
+        assert_eq!(cloned.text, original.text);
+        assert_eq!(cloned.bbox, original.bbox);
+        assert_eq!(cloned.confidence, original.confidence);
+    }
+
+    #[test]
+    fn test_ocr_result_debug_impl() {
+        let result = OcrResult {
+            input_path: PathBuf::from("/test.png"),
+            text_blocks: vec![],
+            confidence: 0.85,
+            processing_time: Duration::from_secs(1),
+            text_direction: TextDirection::Horizontal,
+        };
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("OcrResult"));
+    }
+
+    #[test]
+    fn test_batch_result_debug_impl() {
+        let batch = BatchOcrResult {
+            successful: vec![],
+            failed: vec![],
+            total_time: Duration::from_secs(5),
+        };
+        let debug_str = format!("{:?}", batch);
+        assert!(debug_str.contains("BatchOcrResult"));
+    }
+
+    #[test]
+    fn test_error_debug_impl() {
+        let err = YomiTokuError::NotInstalled;
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("NotInstalled"));
+    }
+
+    #[test]
+    fn test_language_debug_impl() {
+        let lang = Language::ChineseTraditional;
+        let debug_str = format!("{:?}", lang);
+        assert!(debug_str.contains("ChineseTraditional"));
+    }
+
+    #[test]
+    fn test_output_format_debug_impl() {
+        let format = OutputFormat::Hocr;
+        let debug_str = format!("{:?}", format);
+        assert!(debug_str.contains("Hocr"));
+    }
+
+    #[test]
+    fn test_text_direction_debug_impl() {
+        let dir = TextDirection::Mixed;
+        let debug_str = format!("{:?}", dir);
+        assert!(debug_str.contains("Mixed"));
+    }
+
+    #[test]
+    fn test_text_direction_clone() {
+        let original = TextDirection::Vertical;
+        let cloned = original.clone();
+        assert!(matches!(cloned, TextDirection::Vertical));
+    }
+
+    #[test]
+    fn test_language_clone() {
+        let original = Language::English;
+        let cloned = original.clone();
+        assert_eq!(cloned.code(), original.code());
+    }
+
+    #[test]
+    fn test_output_format_clone() {
+        let original = OutputFormat::Pdf;
+        let cloned = original.clone();
+        assert_eq!(cloned.extension(), original.extension());
+    }
+
+    #[test]
+    fn test_error_io_conversion() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let yomi_err: YomiTokuError = io_err.into();
+        let msg = yomi_err.to_string().to_lowercase();
+        assert!(msg.contains("io") || msg.contains("error"));
+    }
+
+    #[test]
+    fn test_builder_default_produces_valid_options() {
+        let opts = YomiTokuOptionsBuilder::default().build();
+        assert!(opts.confidence_threshold >= 0.0 && opts.confidence_threshold <= 1.0);
+        assert!(opts.timeout_secs > 0);
+    }
+
+    #[test]
+    fn test_text_block_with_unicode_text() {
+        let block = TextBlock {
+            text: "日本語テスト 한국어 中文 🎉".to_string(),
+            bbox: (0, 0, 100, 50),
+            confidence: 0.9,
+            direction: TextDirection::Horizontal,
+            font_size: None,
+        };
+        assert!(block.text.contains("日本語"));
+        assert!(block.text.contains("한국어"));
+        assert!(block.text.contains("中文"));
+    }
+
+    #[test]
+    fn test_text_block_with_empty_text() {
+        let block = TextBlock {
+            text: String::new(),
+            bbox: (0, 0, 0, 0),
+            confidence: 0.0,
+            direction: TextDirection::Horizontal,
+            font_size: None,
+        };
+        assert!(block.text.is_empty());
+    }
+
+    #[test]
+    fn test_ocr_result_path_types() {
+        // Absolute path
+        let result_abs = OcrResult {
+            input_path: PathBuf::from("/absolute/path/image.png"),
+            text_blocks: vec![],
+            confidence: 0.5,
+            processing_time: Duration::ZERO,
+            text_direction: TextDirection::Horizontal,
+        };
+        assert!(result_abs.input_path.is_absolute());
+
+        // Relative path
+        let result_rel = OcrResult {
+            input_path: PathBuf::from("relative/path/image.png"),
+            text_blocks: vec![],
+            confidence: 0.5,
+            processing_time: Duration::ZERO,
+            text_direction: TextDirection::Horizontal,
+        };
+        assert!(result_rel.input_path.is_relative());
+    }
+
+    #[test]
+    fn test_processing_time_variations() {
+        // Zero time
+        let result_zero = OcrResult {
+            input_path: PathBuf::from("/fast.png"),
+            text_blocks: vec![],
+            confidence: 1.0,
+            processing_time: Duration::ZERO,
+            text_direction: TextDirection::Horizontal,
+        };
+        assert_eq!(result_zero.processing_time, Duration::ZERO);
+
+        // Very long processing time
+        let result_long = OcrResult {
+            input_path: PathBuf::from("/slow.png"),
+            text_blocks: vec![],
+            confidence: 0.5,
+            processing_time: Duration::from_secs(3600), // 1 hour
+            text_direction: TextDirection::Horizontal,
+        };
+        assert_eq!(result_long.processing_time.as_secs(), 3600);
+    }
+
+    #[test]
+    fn test_font_size_variations() {
+        // Very small font
+        let small_font = TextBlock {
+            text: "tiny".to_string(),
+            bbox: (0, 0, 10, 5),
+            confidence: 0.5,
+            direction: TextDirection::Horizontal,
+            font_size: Some(4.0),
+        };
+        assert_eq!(small_font.font_size, Some(4.0));
+
+        // Very large font
+        let large_font = TextBlock {
+            text: "HUGE".to_string(),
+            bbox: (0, 0, 500, 200),
+            confidence: 0.9,
+            direction: TextDirection::Horizontal,
+            font_size: Some(144.0),
+        };
+        assert_eq!(large_font.font_size, Some(144.0));
+    }
+
+    #[test]
+    fn test_preset_consistency() {
+        let books = YomiTokuOptions::for_books();
+        let horizontal = YomiTokuOptions::horizontal_only();
+
+        // Books preset should detect vertical
+        assert!(books.detect_vertical);
+
+        // Horizontal only should not detect vertical
+        assert!(!horizontal.detect_vertical);
+    }
+
+    #[test]
+    fn test_error_path_extraction() {
+        let path = PathBuf::from("/some/input/file.png");
+        let err = YomiTokuError::InputNotFound(path.clone());
+
+        if let YomiTokuError::InputNotFound(p) = err {
+            assert_eq!(p, path);
+        } else {
+            panic!("Wrong error variant");
+        }
+    }
+
+    #[test]
+    fn test_batch_result_mixed() {
+        // Mix of success and failure
+        let successful = vec![
+            OcrResult {
+                input_path: PathBuf::from("/page1.png"),
+                text_blocks: vec![],
+                confidence: 0.9,
+                processing_time: Duration::from_millis(100),
+                text_direction: TextDirection::Horizontal,
+            },
+            OcrResult {
+                input_path: PathBuf::from("/page3.png"),
+                text_blocks: vec![],
+                confidence: 0.8,
+                processing_time: Duration::from_millis(150),
+                text_direction: TextDirection::Vertical,
+            },
+        ];
+
+        let failed = vec![(PathBuf::from("/page2.png"), "corrupt image".to_string())];
+
+        let batch = BatchOcrResult {
+            successful,
+            failed,
+            total_time: Duration::from_millis(350),
+        };
+
+        assert_eq!(batch.successful.len(), 2);
+        assert_eq!(batch.failed.len(), 1);
+        assert!(batch.failed[0].1.contains("corrupt"));
+    }
+
+    #[test]
+    fn test_confidence_zero_to_one_range() {
+        for i in 0..=10 {
+            let conf = i as f32 / 10.0;
+            let block = TextBlock {
+                text: format!("conf_{}", i),
+                bbox: (0, 0, 10, 10),
+                confidence: conf,
+                direction: TextDirection::Horizontal,
+                font_size: None,
+            };
+            assert!(block.confidence >= 0.0 && block.confidence <= 1.0);
+        }
+    }
+
+    #[test]
+    fn test_all_language_variants() {
+        let languages = [
+            Language::Japanese,
+            Language::English,
+            Language::ChineseSimplified,
+            Language::ChineseTraditional,
+            Language::Korean,
+        ];
+
+        for lang in languages {
+            let code = lang.code();
+            assert!(!code.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_all_output_format_variants() {
+        let formats = [
+            OutputFormat::Json,
+            OutputFormat::Text,
+            OutputFormat::Hocr,
+            OutputFormat::Pdf,
+        ];
+
+        for format in formats {
+            let ext = format.extension();
+            assert!(!ext.is_empty());
+        }
+    }
 }
