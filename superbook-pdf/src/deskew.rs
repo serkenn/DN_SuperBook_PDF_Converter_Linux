@@ -708,6 +708,7 @@ mod tests {
 
     // Image fixture tests
 
+    // TC-DSK-001: 傾き検出（正の角度）
     #[test]
     fn test_detect_positive_skew() {
         let detection = ImageProcDeskewer::detect_skew(
@@ -732,6 +733,7 @@ mod tests {
         assert!(detection.confidence >= 0.0 && detection.confidence <= 1.0);
     }
 
+    // TC-DSK-002: 傾き検出（負の角度）
     #[test]
     fn test_detect_negative_skew() {
         let detection = ImageProcDeskewer::detect_skew(
@@ -749,6 +751,7 @@ mod tests {
         assert!(detection.confidence >= 0.0);
     }
 
+    // TC-DSK-004: 傾き補正実行
     #[test]
     fn test_correct_skew() {
         let temp_dir = tempdir().unwrap();
@@ -781,6 +784,7 @@ mod tests {
         }
     }
 
+    // TC-DSK-005: 閾値以下は補正しない
     #[test]
     fn test_threshold_skip() {
         let temp_dir = tempdir().unwrap();

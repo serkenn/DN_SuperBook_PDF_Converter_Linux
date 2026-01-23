@@ -686,6 +686,7 @@ mod tests {
 
     // Image fixture tests
 
+    // TC-MRG-001: 単一画像マージン検出
     #[test]
     fn test_detect_single_image_margins() {
         // Use lower threshold to detect gray content (50) against white background (255)
@@ -717,6 +718,7 @@ mod tests {
         }
     }
 
+    // TC-MRG-002: マージンなし画像
     #[test]
     fn test_detect_no_margins() {
         let options = MarginOptions {
