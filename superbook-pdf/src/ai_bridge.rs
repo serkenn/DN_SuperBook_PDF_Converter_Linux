@@ -784,4 +784,220 @@ mod tests {
         assert_eq!(result.duration, Duration::from_secs(5));
         assert!(result.gpu_stats.is_some());
     }
+
+    // Test GpuStats construction
+    #[test]
+    fn test_gpu_stats() {
+        let stats = GpuStats {
+            peak_vram_mb: 4096,
+            avg_utilization: 85.5,
+        };
+
+        assert_eq!(stats.peak_vram_mb, 4096);
+        assert_eq!(stats.avg_utilization, 85.5);
+    }
+
+    // Test AiTaskResult without GPU stats
+    #[test]
+    fn test_ai_task_result_no_gpu() {
+        let result = AiTaskResult {
+            processed_files: vec![PathBuf::from("test.png")],
+            skipped_files: vec![],
+            failed_files: vec![],
+            duration: Duration::from_secs(3),
+            gpu_stats: None,
+        };
+
+        assert_eq!(result.processed_files.len(), 1);
+        assert!(result.gpu_stats.is_none());
+    }
+
+    // Test error display messages
+    #[test]
+    fn test_error_display() {
+        let errors: Vec<(AiBridgeError, &str)> = vec![
+            (
+                AiBridgeError::VenvNotFound(PathBuf::from("/test")),
+                "environment",
+            ),
+            (AiBridgeError::GpuNotAvailable, "gpu"),
+            (AiBridgeError::OutOfMemory, "memory"),
+            (
+                AiBridgeError::ProcessFailed("test error".to_string()),
+                "failed",
+            ),
+            (AiBridgeError::Timeout(Duration::from_secs(60)), "timed out"),
+        ];
+
+        for (err, expected_substr) in errors {
+            let msg = err.to_string().to_lowercase();
+            assert!(
+                msg.contains(&expected_substr.to_lowercase()),
+                "Expected '{}' to contain '{}'",
+                msg,
+                expected_substr
+            );
+        }
+    }
+
+    // Test log level variants
+    #[test]
+    fn test_log_level_variants() {
+        assert!(matches!(LogLevel::Error, LogLevel::Error));
+        assert!(matches!(LogLevel::Warn, LogLevel::Warn));
+        assert!(matches!(LogLevel::Info, LogLevel::Info));
+        assert!(matches!(LogLevel::Debug, LogLevel::Debug));
+    }
+
+    // Test GpuConfig with max_vram
+    #[test]
+    fn test_gpu_config_max_vram() {
+        let gpu_config = GpuConfig {
+            enabled: true,
+            device_id: Some(0),
+            max_vram_mb: Some(4096),
+            tile_size: Some(256),
+        };
+
+        assert_eq!(gpu_config.max_vram_mb, Some(4096));
+        assert_eq!(gpu_config.tile_size, Some(256));
+    }
+
+    // Test builder retry settings
+    #[test]
+    fn test_builder_retry_settings() {
+        let config = AiBridgeConfig::builder().max_retries(5).build();
+
+        assert_eq!(config.retry_config.max_retries, 5);
+    }
+
+    // Test RetryConfig interval
+    #[test]
+    fn test_retry_config_interval() {
+        let retry_config = RetryConfig {
+            max_retries: 3,
+            retry_interval: Duration::from_secs(10),
+            exponential_backoff: true,
+        };
+
+        assert_eq!(retry_config.retry_interval, Duration::from_secs(10));
+    }
+
+    // Test builder chaining
+    #[test]
+    fn test_builder_chaining() {
+        let config = AiBridgeConfig::builder()
+            .venv_path("/custom/venv")
+            .gpu_enabled(true)
+            .gpu_device(0)
+            .timeout(Duration::from_secs(7200))
+            .max_retries(2)
+            .log_level(LogLevel::Warn)
+            .build();
+
+        assert_eq!(config.venv_path, PathBuf::from("/custom/venv"));
+        assert!(config.gpu_config.enabled);
+        assert_eq!(config.gpu_config.device_id, Some(0));
+        assert_eq!(config.timeout, Duration::from_secs(7200));
+        assert_eq!(config.retry_config.max_retries, 2);
+    }
+
+    // Test builder with gpu_config
+    #[test]
+    fn test_builder_gpu_config() {
+        let gpu_config = GpuConfig {
+            enabled: true,
+            device_id: Some(1),
+            max_vram_mb: Some(8192),
+            tile_size: Some(512),
+        };
+
+        let config = AiBridgeConfig::builder().gpu_config(gpu_config).build();
+
+        assert!(config.gpu_config.enabled);
+        assert_eq!(config.gpu_config.device_id, Some(1));
+        assert_eq!(config.gpu_config.max_vram_mb, Some(8192));
+        assert_eq!(config.gpu_config.tile_size, Some(512));
+    }
+
+    // Test builder with retry_config
+    #[test]
+    fn test_builder_retry_config() {
+        let retry_config = RetryConfig {
+            max_retries: 10,
+            retry_interval: Duration::from_secs(30),
+            exponential_backoff: false,
+        };
+
+        let config = AiBridgeConfig::builder().retry_config(retry_config).build();
+
+        assert_eq!(config.retry_config.max_retries, 10);
+        assert_eq!(config.retry_config.retry_interval, Duration::from_secs(30));
+        assert!(!config.retry_config.exponential_backoff);
+    }
+
+    // Test ProcessStatus running progress
+    #[test]
+    fn test_process_status_progress() {
+        let running_50 = ProcessStatus::Running { progress: 0.5 };
+        let running_100 = ProcessStatus::Running { progress: 1.0 };
+        let running_0 = ProcessStatus::Running { progress: 0.0 };
+
+        if let ProcessStatus::Running { progress } = running_50 {
+            assert_eq!(progress, 0.5);
+        }
+        if let ProcessStatus::Running { progress } = running_100 {
+            assert_eq!(progress, 1.0);
+        }
+        if let ProcessStatus::Running { progress } = running_0 {
+            assert_eq!(progress, 0.0);
+        }
+    }
+
+    // Test ProcessStatus failed error message
+    #[test]
+    fn test_process_status_failed() {
+        let failed = ProcessStatus::Failed {
+            error: "Connection timeout".to_string(),
+            retries: 3,
+        };
+
+        if let ProcessStatus::Failed { error, retries } = failed {
+            assert_eq!(error, "Connection timeout");
+            assert_eq!(retries, 3);
+        }
+    }
+
+    // Test ProcessStatus completed duration
+    #[test]
+    fn test_process_status_completed() {
+        let completed = ProcessStatus::Completed {
+            duration: Duration::from_millis(1500),
+        };
+
+        if let ProcessStatus::Completed { duration } = completed {
+            assert_eq!(duration, Duration::from_millis(1500));
+        }
+    }
+
+    // Test all AiTool module names
+    #[test]
+    fn test_all_tool_module_names() {
+        assert_eq!(AiTool::RealESRGAN.module_name(), "realesrgan");
+        assert_eq!(AiTool::YomiToku.module_name(), "yomitoku");
+    }
+
+    // Test retry config without exponential backoff
+    #[test]
+    fn test_retry_config_linear() {
+        let config = RetryConfig {
+            max_retries: 5,
+            retry_interval: Duration::from_secs(2),
+            exponential_backoff: false,
+        };
+
+        assert_eq!(config.max_retries, 5);
+        assert_eq!(config.retry_interval, Duration::from_secs(2));
+        assert!(!config.exponential_backoff);
+    }
 }

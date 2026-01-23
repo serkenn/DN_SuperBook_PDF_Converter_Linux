@@ -210,7 +210,12 @@ fn test_convert_help() {
 fn test_exit_code_success_dry_run() {
     // Dry run with valid input should return success (exit code 0)
     superbook_cmd()
-        .args(["convert", "tests/fixtures/sample.pdf", "/tmp/out", "--dry-run"])
+        .args([
+            "convert",
+            "tests/fixtures/sample.pdf",
+            "/tmp/out",
+            "--dry-run",
+        ])
         .assert()
         .code(0);
 }
@@ -227,19 +232,13 @@ fn test_exit_code_input_not_found() {
 #[test]
 fn test_exit_code_help_success() {
     // Help command should return success (exit code 0)
-    superbook_cmd()
-        .arg("--help")
-        .assert()
-        .code(0);
+    superbook_cmd().arg("--help").assert().code(0);
 }
 
 #[test]
 fn test_exit_code_info_success() {
     // Info command should return success (exit code 0)
-    superbook_cmd()
-        .arg("info")
-        .assert()
-        .code(0);
+    superbook_cmd().arg("info").assert().code(0);
 }
 
 #[test]

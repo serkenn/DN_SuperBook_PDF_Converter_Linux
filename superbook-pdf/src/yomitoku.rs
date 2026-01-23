@@ -621,4 +621,199 @@ mod tests {
         assert!(batch.failed.is_empty());
         assert_eq!(batch.total_time, Duration::from_secs(10));
     }
+
+    // Test extract_text with empty blocks
+    #[test]
+    fn test_extract_text_empty() {
+        let result = OcrResult {
+            input_path: PathBuf::from("/test.png"),
+            text_blocks: vec![],
+            confidence: 0.0,
+            processing_time: Duration::from_millis(10),
+            text_direction: TextDirection::Horizontal,
+        };
+
+        let text = YomiToku::extract_text(&result);
+        assert!(text.is_empty());
+    }
+
+    // Test extract_text with single block
+    #[test]
+    fn test_extract_text_single_block() {
+        let result = OcrResult {
+            input_path: PathBuf::from("/test.png"),
+            text_blocks: vec![TextBlock {
+                text: "単一ブロック".to_string(),
+                bbox: (0, 0, 100, 20),
+                confidence: 0.9,
+                direction: TextDirection::Horizontal,
+                font_size: None,
+            }],
+            confidence: 0.9,
+            processing_time: Duration::from_millis(50),
+            text_direction: TextDirection::Horizontal,
+        };
+
+        let text = YomiToku::extract_text(&result);
+        assert_eq!(text, "単一ブロック");
+    }
+
+    // Test all language codes
+    #[test]
+    fn test_all_language_codes() {
+        assert_eq!(Language::Japanese.code(), "ja");
+        assert_eq!(Language::English.code(), "en");
+        assert_eq!(Language::ChineseSimplified.code(), "zh-CN");
+        assert_eq!(Language::ChineseTraditional.code(), "zh-TW");
+        assert_eq!(Language::Korean.code(), "ko");
+    }
+
+    // Test text direction equality
+    #[test]
+    fn test_text_direction_equality() {
+        assert_eq!(TextDirection::Horizontal, TextDirection::Horizontal);
+        assert_eq!(TextDirection::Vertical, TextDirection::Vertical);
+        assert_eq!(TextDirection::Mixed, TextDirection::Mixed);
+        assert_ne!(TextDirection::Horizontal, TextDirection::Vertical);
+    }
+
+    // Test output format conversion
+    #[test]
+    fn test_output_format_all() {
+        let formats = vec![
+            (OutputFormat::Json, "json"),
+            (OutputFormat::Text, "txt"),
+            (OutputFormat::Hocr, "hocr"),
+            (OutputFormat::Pdf, "pdf"),
+        ];
+
+        for (format, expected_ext) in formats {
+            assert_eq!(format.extension(), expected_ext);
+        }
+    }
+
+    // Test builder with all options
+    #[test]
+    fn test_builder_all_options() {
+        let opts = YomiTokuOptions::builder()
+            .use_gpu(true)
+            .confidence_threshold(0.7)
+            .detect_vertical(true)
+            .output_format(OutputFormat::Hocr)
+            .language(Language::ChineseSimplified)
+            .timeout(1800)
+            .gpu_id(2)
+            .build();
+
+        assert!(opts.use_gpu);
+        assert_eq!(opts.confidence_threshold, 0.7);
+        assert!(opts.detect_vertical);
+        assert!(matches!(opts.output_format, OutputFormat::Hocr));
+        assert!(matches!(opts.language, Language::ChineseSimplified));
+        assert_eq!(opts.timeout_secs, 1800);
+        assert_eq!(opts.gpu_id, Some(2));
+    }
+
+    // Test OcrResult with multiple blocks
+    #[test]
+    fn test_ocr_result_multiple_blocks() {
+        let blocks = vec![
+            TextBlock {
+                text: "第一章".to_string(),
+                bbox: (100, 50, 200, 30),
+                confidence: 0.95,
+                direction: TextDirection::Horizontal,
+                font_size: Some(24.0),
+            },
+            TextBlock {
+                text: "本文内容".to_string(),
+                bbox: (50, 100, 300, 400),
+                confidence: 0.88,
+                direction: TextDirection::Vertical,
+                font_size: Some(12.0),
+            },
+        ];
+
+        let result = OcrResult {
+            input_path: PathBuf::from("/page1.png"),
+            text_blocks: blocks,
+            confidence: 0.915,
+            processing_time: Duration::from_secs(2),
+            text_direction: TextDirection::Mixed,
+        };
+
+        assert_eq!(result.text_blocks.len(), 2);
+        assert!(matches!(result.text_direction, TextDirection::Mixed));
+    }
+
+    // Test batch result with failures
+    #[test]
+    fn test_batch_result_with_failures() {
+        let successful = vec![OcrResult {
+            input_path: PathBuf::from("/page1.png"),
+            text_blocks: vec![],
+            confidence: 0.8,
+            processing_time: Duration::from_secs(1),
+            text_direction: TextDirection::Horizontal,
+        }];
+
+        let failed = vec![
+            (PathBuf::from("/page2.png"), "File not found".to_string()),
+            (PathBuf::from("/page3.png"), "Invalid image".to_string()),
+        ];
+
+        let batch = BatchOcrResult {
+            successful,
+            failed,
+            total_time: Duration::from_secs(3),
+        };
+
+        assert_eq!(batch.successful.len(), 1);
+        assert_eq!(batch.failed.len(), 2);
+    }
+
+    // Test error display messages
+    #[test]
+    fn test_error_display_messages() {
+        let errors: Vec<(YomiTokuError, &str)> = vec![
+            (
+                YomiTokuError::InputNotFound(PathBuf::from("/test")),
+                "not found",
+            ),
+            (
+                YomiTokuError::OutputNotWritable(PathBuf::from("/test")),
+                "not writable",
+            ),
+            (
+                YomiTokuError::ExecutionFailed("test".to_string()),
+                "Execution failed",
+            ),
+            (YomiTokuError::NotInstalled, "not installed"),
+            (YomiTokuError::InvalidOutput, "Invalid output"),
+        ];
+
+        for (err, expected_substr) in errors {
+            let msg = err.to_string().to_lowercase();
+            assert!(
+                msg.contains(&expected_substr.to_lowercase()),
+                "Expected '{}' to contain '{}'",
+                msg,
+                expected_substr
+            );
+        }
+    }
+
+    // Test TextBlock without font_size
+    #[test]
+    fn test_text_block_no_font_size() {
+        let block = TextBlock {
+            text: "テスト".to_string(),
+            bbox: (0, 0, 50, 20),
+            confidence: 0.9,
+            direction: TextDirection::Horizontal,
+            font_size: None,
+        };
+
+        assert!(block.font_size.is_none());
+    }
 }

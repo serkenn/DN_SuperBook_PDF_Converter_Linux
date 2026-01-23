@@ -175,7 +175,7 @@ impl RealEsrganOptionsBuilder {
 }
 
 /// RealESRGAN model types
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum RealEsrganModel {
     /// RealESRGAN_x4plus (high quality, general purpose)
     #[default]
@@ -213,7 +213,7 @@ impl RealEsrganModel {
 }
 
 /// Output formats
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum OutputFormat {
     #[default]
     Png,
@@ -846,5 +846,138 @@ mod tests {
             assert!(!models.is_empty());
             assert!(models.len() >= 4); // At least 4 built-in models
         }
+    }
+
+    // TC-RES-008: Progress callback test (unit test portion)
+    #[test]
+    fn test_progress_callback_structure() {
+        use std::sync::{Arc, Mutex};
+
+        let progress_log = Arc::new(Mutex::new(Vec::new()));
+        let progress_clone = progress_log.clone();
+
+        // Simulate progress callback
+        let callback = move |current: usize, total: usize| {
+            progress_clone.lock().unwrap().push((current, total));
+        };
+
+        // Simulate 5 progress updates
+        for i in 1..=5 {
+            callback(i, 5);
+        }
+
+        let recorded = progress_log.lock().unwrap();
+        assert_eq!(recorded.len(), 5);
+        assert_eq!(recorded[0], (1, 5));
+        assert_eq!(recorded[4], (5, 5));
+    }
+
+    // Test WebP output format
+    #[test]
+    fn test_webp_output_format() {
+        let options = RealEsrganOptions::builder()
+            .output_format(OutputFormat::Webp { quality: 85 })
+            .build();
+
+        assert!(matches!(
+            options.output_format,
+            OutputFormat::Webp { quality: 85 }
+        ));
+    }
+
+    // Test custom model support
+    #[test]
+    fn test_custom_model() {
+        let custom = RealEsrganModel::Custom("MyCustomModel_x8".to_string());
+
+        assert_eq!(custom.model_name(), "MyCustomModel_x8");
+        assert_eq!(custom.default_scale(), 4); // Default for custom models
+    }
+
+    // Test all error variants can display
+    #[test]
+    fn test_error_display() {
+        let errors = vec![
+            RealEsrganError::ModelNotFound("test".to_string()),
+            RealEsrganError::InvalidScale(3),
+            RealEsrganError::InputNotFound(PathBuf::from("/test")),
+            RealEsrganError::OutputNotWritable(PathBuf::from("/test")),
+            RealEsrganError::ProcessingFailed("test error".to_string()),
+            RealEsrganError::InsufficientVram {
+                required: 8000,
+                available: 4000,
+            },
+            RealEsrganError::ImageError("image error".to_string()),
+        ];
+
+        for err in errors {
+            // Verify each error has a non-empty display message
+            assert!(!err.to_string().is_empty());
+        }
+    }
+
+    // Test tile padding validation
+    #[test]
+    fn test_tile_padding_in_builder() {
+        let options = RealEsrganOptions::builder().tile_padding(20).build();
+        assert_eq!(options.tile_padding, 20);
+
+        let options = RealEsrganOptions::builder().tile_padding(0).build();
+        assert_eq!(options.tile_padding, 0);
+    }
+
+    // Test face enhance option
+    #[test]
+    fn test_face_enhance_option() {
+        let options = RealEsrganOptions::builder().face_enhance(true).build();
+        assert!(options.face_enhance);
+
+        let default_options = RealEsrganOptions::default();
+        assert!(!default_options.face_enhance);
+    }
+
+    // Test model enum equality
+    #[test]
+    fn test_model_enum_equality() {
+        assert_eq!(RealEsrganModel::X4Plus, RealEsrganModel::X4Plus);
+        assert_ne!(RealEsrganModel::X4Plus, RealEsrganModel::X2Plus);
+
+        let custom1 = RealEsrganModel::Custom("model1".to_string());
+        let custom2 = RealEsrganModel::Custom("model1".to_string());
+        let custom3 = RealEsrganModel::Custom("model2".to_string());
+
+        assert_eq!(custom1, custom2);
+        assert_ne!(custom1, custom3);
+    }
+
+    // Test output format equality
+    #[test]
+    fn test_output_format_equality() {
+        assert_eq!(OutputFormat::Png, OutputFormat::Png);
+        assert_eq!(
+            OutputFormat::Jpg { quality: 90 },
+            OutputFormat::Jpg { quality: 90 }
+        );
+        assert_ne!(
+            OutputFormat::Jpg { quality: 90 },
+            OutputFormat::Jpg { quality: 80 }
+        );
+    }
+
+    // Test result with None vram
+    #[test]
+    fn test_upscale_result_without_vram() {
+        let result = UpscaleResult {
+            input_path: PathBuf::from("input.png"),
+            output_path: PathBuf::from("output.png"),
+            original_size: (100, 100),
+            upscaled_size: (400, 400),
+            actual_scale: 4.0,
+            processing_time: Duration::from_secs(10),
+            vram_used_mb: None,
+        };
+
+        assert!(result.vram_used_mb.is_none());
+        assert_eq!(result.actual_scale, 4.0);
     }
 }
