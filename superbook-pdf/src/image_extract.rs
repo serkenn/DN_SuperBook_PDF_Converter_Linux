@@ -1472,4 +1472,232 @@ mod tests {
         let without_bg = ExtractOptions::builder().no_background().build();
         assert!(without_bg.background.is_none());
     }
+
+    // ============ Concurrency Tests ============
+
+    #[test]
+    fn test_image_extract_types_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ExtractOptions>();
+        assert_send_sync::<ExtractedPage>();
+        assert_send_sync::<ImageFormat>();
+        assert_send_sync::<ColorSpace>();
+    }
+
+    #[test]
+    fn test_concurrent_options_building() {
+        use std::thread;
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                thread::spawn(move || {
+                    ExtractOptions::builder()
+                        .dpi(150 + (i as u32 * 50))
+                        .colorspace(if i % 2 == 0 {
+                            ColorSpace::Rgb
+                        } else {
+                            ColorSpace::Grayscale
+                        })
+                        .build()
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles
+            .into_iter()
+            .map(|h: std::thread::JoinHandle<ExtractOptions>| h.join().unwrap())
+            .collect();
+        assert_eq!(results.len(), 8);
+        for (i, opt) in results.iter().enumerate() {
+            assert_eq!(opt.dpi, 150 + (i as u32 * 50));
+        }
+    }
+
+    #[test]
+    fn test_parallel_extracted_page_creation() {
+        use rayon::prelude::*;
+
+        let pages: Vec<_> = (0..100)
+            .into_par_iter()
+            .map(|i| ExtractedPage {
+                page_index: i,
+                path: PathBuf::from(format!("page_{:04}.png", i)),
+                width: 1000 + i as u32,
+                height: 1500 + i as u32,
+                format: ImageFormat::Png,
+            })
+            .collect();
+
+        assert_eq!(pages.len(), 100);
+        for (i, page) in pages.iter().enumerate() {
+            assert_eq!(page.page_index, i);
+            assert_eq!(page.width, 1000 + i as u32);
+        }
+    }
+
+    #[test]
+    fn test_extracted_page_thread_transfer() {
+        use std::thread;
+
+        let page = ExtractedPage {
+            page_index: 42,
+            path: PathBuf::from("/tmp/test_page.png"),
+            width: 2480,
+            height: 3508,
+            format: ImageFormat::Jpeg { quality: 95 },
+        };
+
+        let handle = thread::spawn(move || {
+            assert_eq!(page.page_index, 42);
+            assert_eq!(page.width, 2480);
+            page.path.to_string_lossy().to_string()
+        });
+
+        let result = handle.join().unwrap();
+        assert!(result.contains("test_page"));
+    }
+
+    #[test]
+    fn test_options_shared_across_threads() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let options = Arc::new(
+            ExtractOptions::builder()
+                .dpi(600)
+                .format(ImageFormat::Png)
+                .colorspace(ColorSpace::Rgb)
+                .build(),
+        );
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let opts = Arc::clone(&options);
+                thread::spawn(move || {
+                    assert_eq!(opts.dpi, 600);
+                    opts.dpi
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            let result: u32 = handle.join().unwrap();
+            assert_eq!(result, 600);
+        }
+    }
+
+    #[test]
+    fn test_image_format_thread_safe() {
+        use std::thread;
+
+        let formats = vec![
+            ImageFormat::Png,
+            ImageFormat::Jpeg { quality: 90 },
+            ImageFormat::Tiff,
+            ImageFormat::Bmp,
+        ];
+
+        let handles: Vec<_> = formats
+            .into_iter()
+            .map(|format| {
+                thread::spawn(move || {
+                    let ext = format.extension();
+                    ext.to_string()
+                })
+            })
+            .collect();
+
+        let extensions: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(extensions.len(), 4);
+        assert!(extensions.contains(&"png".to_string()));
+        assert!(extensions.contains(&"jpg".to_string()));
+    }
+
+    // ============ Additional Boundary Tests ============
+
+    #[test]
+    fn test_dpi_boundary_minimum() {
+        // Values below MIN_DPI (72) should be clamped to MIN_DPI
+        let opts = ExtractOptions::builder().dpi(1).build();
+        assert_eq!(opts.dpi, MIN_DPI);
+    }
+
+    #[test]
+    fn test_dpi_boundary_maximum() {
+        // Values above MAX_DPI (1200) should be clamped to MAX_DPI
+        let opts = ExtractOptions::builder().dpi(2400).build();
+        assert_eq!(opts.dpi, MAX_DPI);
+    }
+
+    #[test]
+    fn test_page_index_zero() {
+        let page = ExtractedPage {
+            page_index: 0,
+            path: PathBuf::from("first.png"),
+            width: 100,
+            height: 100,
+            format: ImageFormat::Png,
+        };
+        assert_eq!(page.page_index, 0);
+    }
+
+    #[test]
+    fn test_page_index_large() {
+        let page = ExtractedPage {
+            page_index: 10000,
+            path: PathBuf::from("page_10000.png"),
+            width: 100,
+            height: 100,
+            format: ImageFormat::Png,
+        };
+        assert_eq!(page.page_index, 10000);
+    }
+
+    #[test]
+    fn test_page_dimensions_zero() {
+        let page = ExtractedPage {
+            page_index: 0,
+            path: PathBuf::from("empty.png"),
+            width: 0,
+            height: 0,
+            format: ImageFormat::Png,
+        };
+        assert_eq!(page.width, 0);
+        assert_eq!(page.height, 0);
+    }
+
+    #[test]
+    fn test_page_dimensions_large() {
+        let page = ExtractedPage {
+            page_index: 0,
+            path: PathBuf::from("huge.png"),
+            width: 32768,
+            height: 32768,
+            format: ImageFormat::Png,
+        };
+        assert_eq!(page.width, 32768);
+        assert_eq!(page.height, 32768);
+    }
+
+    #[test]
+    fn test_background_color_black() {
+        let opts = ExtractOptions::builder().background([0, 0, 0]).build();
+        assert_eq!(opts.background, Some([0, 0, 0]));
+    }
+
+    #[test]
+    fn test_background_color_white() {
+        let opts = ExtractOptions::builder()
+            .background([255, 255, 255])
+            .build();
+        assert_eq!(opts.background, Some([255, 255, 255]));
+    }
+
+    #[test]
+    fn test_all_color_spaces() {
+        let spaces = [ColorSpace::Rgb, ColorSpace::Grayscale, ColorSpace::Cmyk];
+        for space in spaces {
+            let opts = ExtractOptions::builder().colorspace(space).build();
+            assert_eq!(opts.colorspace, space);
+        }
+    }
 }
