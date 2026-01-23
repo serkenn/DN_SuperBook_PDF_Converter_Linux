@@ -94,6 +94,25 @@
 //! assert_eq!(code.description(), "Success");
 //! ```
 //!
+//! # Error Handling Example
+//!
+//! ```rust
+//! use superbook_pdf::{PdfReaderError, MarginError, DeskewError};
+//! use std::path::PathBuf;
+//!
+//! fn handle_pdf_error(err: PdfReaderError) -> String {
+//!     match err {
+//!         PdfReaderError::FileNotFound(path) => format!("File not found: {}", path.display()),
+//!         PdfReaderError::InvalidFormat(msg) => format!("Invalid PDF: {}", msg),
+//!         PdfReaderError::EncryptedPdf => "Encrypted PDFs are not supported".to_string(),
+//!         _ => format!("Other error: {}", err),
+//!     }
+//! }
+//!
+//! let err = PdfReaderError::FileNotFound(PathBuf::from("/test.pdf"));
+//! assert!(handle_pdf_error(err).contains("/test.pdf"));
+//! ```
+//!
 //! # License
 //!
 //! AGPL-3.0

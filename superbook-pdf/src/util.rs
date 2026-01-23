@@ -1,6 +1,49 @@
 //! Common utilities for superbook-pdf
 //!
 //! Provides shared functionality across modules to reduce code duplication.
+//!
+//! # Examples
+//!
+//! ## Unit Conversions
+//!
+//! ```rust
+//! use superbook_pdf::{mm_to_pixels, pixels_to_mm, mm_to_points, points_to_mm};
+//!
+//! // Convert 25.4mm (1 inch) to pixels at 300 DPI
+//! let pixels = mm_to_pixels(25.4, 300);
+//! assert_eq!(pixels, 300); // 1 inch = 300 pixels at 300 DPI
+//!
+//! // Convert back
+//! let mm = pixels_to_mm(300, 300);
+//! assert!((mm - 25.4).abs() < 0.1);
+//!
+//! // PDF points (72 points per inch)
+//! let points = mm_to_points(25.4);
+//! assert!((points - 72.0).abs() < 0.1);
+//! ```
+//!
+//! ## Utility Functions
+//!
+//! ```rust
+//! use superbook_pdf::{clamp, percentage, format_file_size, format_duration};
+//! use std::time::Duration;
+//!
+//! // Clamp values to range
+//! assert_eq!(clamp(150, 0, 100), 100);
+//! assert_eq!(clamp(-50, 0, 100), 0);
+//! assert_eq!(clamp(50, 0, 100), 50);
+//!
+//! // Calculate percentage
+//! assert_eq!(percentage(25, 100), 25.0);
+//!
+//! // Format file sizes
+//! let size = format_file_size(1024 * 1024);
+//! assert!(size.contains("1") || size.contains("M"));
+//!
+//! // Format durations
+//! let dur = format_duration(Duration::from_secs(90));
+//! assert!(dur.contains("1") || dur.contains("min") || dur.contains(":"));
+//! ```
 
 use image::DynamicImage;
 use std::path::Path;
