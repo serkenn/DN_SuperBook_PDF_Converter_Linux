@@ -269,4 +269,247 @@ mod tests {
         // Same min and max
         assert_eq!(clamp(5, 5, 5), 5);
     }
+
+    // ==================== 追加テスト ====================
+
+    #[test]
+    fn test_pixels_to_mm_high_dpi() {
+        // At 600 DPI (high quality), 600 pixels = 1 inch = 25.4 mm
+        let mm = pixels_to_mm(600, 600);
+        assert!((mm - 25.4).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_pixels_to_mm_zero_pixels() {
+        // Zero pixels should return 0 mm
+        let mm = pixels_to_mm(0, 300);
+        assert_eq!(mm, 0.0);
+    }
+
+    #[test]
+    fn test_pixels_to_mm_large_value() {
+        // Large pixel count (e.g., 8K image width at 300 DPI)
+        let mm = pixels_to_mm(7680, 300);
+        // 7680 / 300 * 25.4 = 650.24 mm
+        assert!((mm - 650.24).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_mm_to_pixels_zero_mm() {
+        // Zero mm should return 0 pixels
+        let px = mm_to_pixels(0.0, 300);
+        assert_eq!(px, 0);
+    }
+
+    #[test]
+    fn test_mm_to_pixels_high_dpi() {
+        // 25.4 mm at 600 DPI = 600 pixels
+        let px = mm_to_pixels(25.4, 600);
+        assert_eq!(px, 600);
+    }
+
+    #[test]
+    fn test_mm_to_pixels_a4_width() {
+        // A4 width is 210 mm, at 300 DPI
+        let px = mm_to_pixels(210.0, 300);
+        // 210 / 25.4 * 300 = 2480.31... → 2480
+        assert_eq!(px, 2480);
+    }
+
+    #[test]
+    fn test_points_to_mm_zero() {
+        // Zero points should return 0 mm
+        let mm = points_to_mm(0.0);
+        assert_eq!(mm, 0.0);
+    }
+
+    #[test]
+    fn test_points_to_mm_a4_height() {
+        // A4 height in points is approximately 841.89 points
+        let mm = points_to_mm(841.89);
+        // Should be close to 297 mm
+        assert!((mm - 297.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_mm_to_points_zero() {
+        // Zero mm should return 0 points
+        let pt = mm_to_points(0.0);
+        assert_eq!(pt, 0.0);
+    }
+
+    #[test]
+    fn test_mm_to_points_a4_width() {
+        // A4 width is 210 mm
+        let pt = mm_to_points(210.0);
+        // Should be approximately 595.28 points
+        assert!((pt - 595.28).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_format_file_size_large_gb() {
+        // Test larger GB values
+        let size = 5 * 1024 * 1024 * 1024u64; // 5 GB
+        assert_eq!(format_file_size(size), "5.00 GB");
+    }
+
+    #[test]
+    fn test_format_file_size_fractional_mb() {
+        // 2.5 MB
+        let size = (2.5 * 1024.0 * 1024.0) as u64;
+        assert_eq!(format_file_size(size), "2.50 MB");
+    }
+
+    #[test]
+    fn test_format_duration_zero() {
+        use std::time::Duration;
+        assert_eq!(format_duration(Duration::from_millis(0)), "0ms");
+    }
+
+    #[test]
+    fn test_format_duration_exact_minute() {
+        use std::time::Duration;
+        assert_eq!(format_duration(Duration::from_secs(60)), "1m 0s");
+    }
+
+    #[test]
+    fn test_format_duration_exact_hour() {
+        use std::time::Duration;
+        assert_eq!(format_duration(Duration::from_secs(3600)), "1h 0m");
+    }
+
+    #[test]
+    fn test_format_duration_multiple_hours() {
+        use std::time::Duration;
+        // 2 hours, 30 minutes, 45 seconds
+        assert_eq!(
+            format_duration(Duration::from_secs(2 * 3600 + 30 * 60 + 45)),
+            "2h 30m"
+        );
+    }
+
+    #[test]
+    fn test_format_duration_with_millis() {
+        use std::time::Duration;
+        assert_eq!(format_duration(Duration::from_millis(1500)), "1.500s");
+    }
+
+    #[test]
+    fn test_clamp_negative_range() {
+        // Negative range
+        assert_eq!(clamp(-5, -10, -1), -5);
+        assert_eq!(clamp(-15, -10, -1), -10);
+        assert_eq!(clamp(0, -10, -1), -1);
+    }
+
+    #[test]
+    fn test_clamp_float_precision() {
+        // Float precision
+        assert!((clamp(0.5f64, 0.0, 1.0) - 0.5).abs() < f64::EPSILON);
+        assert!((clamp(-0.5f64, 0.0, 1.0) - 0.0).abs() < f64::EPSILON);
+        assert!((clamp(1.5f64, 0.0, 1.0) - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_percentage_small_values() {
+        // 1 out of 1000
+        let p = percentage(1, 1000);
+        assert!((p - 0.1).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_percentage_over_100() {
+        // current > total (unusual but valid)
+        let p = percentage(150, 100);
+        assert_eq!(p, 150.0);
+    }
+
+    #[test]
+    fn test_percentage_large_numbers() {
+        // Large numbers
+        let p = percentage(500_000, 1_000_000);
+        assert_eq!(p, 50.0);
+    }
+
+    #[test]
+    fn test_ensure_file_exists_is_directory() {
+        // Path exists but is a directory, not a file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = ensure_file_exists(temp_dir.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not a file"));
+    }
+
+    #[test]
+    fn test_ensure_file_exists_valid_file() {
+        // Create a temporary file and check it
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, b"test").unwrap();
+
+        let result = ensure_file_exists(&file_path);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_load_image_invalid_format() {
+        // Create a file with invalid image data
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("invalid.png");
+        std::fs::write(&file_path, b"not an image").unwrap();
+
+        let result = load_image(&file_path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to load image"));
+    }
+
+    #[test]
+    fn test_ensure_dir_writable_nested() {
+        // Create nested directories
+        let temp_dir = tempfile::tempdir().unwrap();
+        let nested_dir = temp_dir.path().join("a").join("b").join("c");
+
+        let result = ensure_dir_writable(&nested_dir);
+        assert!(result.is_ok());
+        assert!(nested_dir.exists());
+    }
+
+    #[test]
+    fn test_conversion_consistency() {
+        // Test that all conversion functions are consistent
+        let dpi = 300u32;
+
+        // 1 inch = 25.4 mm = 72 points = dpi pixels
+        let inch_in_mm = 25.4f32;
+        let inch_in_points = 72.0f64;
+        let inch_in_pixels = dpi;
+
+        // mm -> pixels -> mm
+        let pixels_from_mm = mm_to_pixels(inch_in_mm, dpi);
+        assert_eq!(pixels_from_mm, inch_in_pixels);
+
+        // points -> mm -> points
+        let mm_from_points = points_to_mm(inch_in_points);
+        assert!((mm_from_points - inch_in_mm).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_format_file_size_boundary_kb_mb() {
+        // Exactly at KB/MB boundary
+        let exactly_mb = 1024u64 * 1024;
+        assert_eq!(format_file_size(exactly_mb), "1.00 MB");
+
+        // One byte less than MB
+        assert_eq!(format_file_size(exactly_mb - 1), "1024.00 KB");
+    }
+
+    #[test]
+    fn test_format_file_size_boundary_mb_gb() {
+        // Exactly at MB/GB boundary
+        let exactly_gb = 1024u64 * 1024 * 1024;
+        assert_eq!(format_file_size(exactly_gb), "1.00 GB");
+
+        // One byte less than GB
+        assert_eq!(format_file_size(exactly_gb - 1), "1024.00 MB");
+    }
 }
