@@ -772,6 +772,7 @@ mod tests {
         }
     }
 
+    // TC-MRG-010: コンテンツなし画像エラー
     #[test]
     fn test_no_content_error() {
         let result = ImageMarginDetector::detect(

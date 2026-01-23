@@ -792,6 +792,7 @@ mod tests {
         }
     }
 
+    // TC-EXT-006: 透明部分の処理
     #[test]
     fn test_background_color_setting() {
         // White background (default)

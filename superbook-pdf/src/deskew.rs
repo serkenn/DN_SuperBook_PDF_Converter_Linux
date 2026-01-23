@@ -964,6 +964,7 @@ mod tests {
         assert_eq!(options.threshold_angle, 0.3);
     }
 
+    // TC-DSK-009: バッチ処理
     // Test batch deskew returns correct number of results
     #[test]
     fn test_batch_deskew_count() {

@@ -718,6 +718,7 @@ mod tests {
     // Note: The following tests require actual Python environment
     // They are marked with #[ignore] until environment is available
 
+    // TC-RES-010: 入力ファイルなしエラー
     #[test]
     #[ignore = "requires external tool"]
     fn test_input_not_found_error() {
@@ -737,6 +738,7 @@ mod tests {
         assert!(matches!(result, Err(RealEsrganError::InputNotFound(_))));
     }
 
+    // TC-RES-001: 単一画像アップスケール
     #[test]
     #[ignore = "requires external tool"]
     fn test_single_image_upscale() {
@@ -899,6 +901,7 @@ mod tests {
         }
     }
 
+    // TC-RES-003: バッチ処理, TC-RES-004: ディレクトリ処理
     // TC-RES-008: Progress callback test (unit test portion)
     #[test]
     fn test_progress_callback_structure() {
