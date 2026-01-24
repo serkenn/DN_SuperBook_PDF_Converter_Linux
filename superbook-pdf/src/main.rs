@@ -11,6 +11,9 @@ use superbook_pdf::{
     ImageMarginDetector, ImageProcDeskewer, LopdfExtractor, LopdfReader, MarginOptions,
     PdfWriterOptions, PrintPdfWriter, RealEsrgan, RealEsrganOptions, SubprocessBridge, YomiToku,
     YomiTokuOptions,
+    // Phase 1-6: Advanced processing modules
+    ColorAnalyzer, FinalizeOptions, GroupCropAnalyzer, ImageNormalizer, NormalizeOptions,
+    PageFinalizer, PageOffsetAnalyzer, TesseractPageDetector,
 };
 
 fn main() {
@@ -130,7 +133,16 @@ fn print_execution_plan(args: &ConvertArgs, pdf_files: &[PathBuf]) {
     } else {
         println!("  5. OCR: DISABLED");
     }
-    println!("  6. PDF Generation");
+    if args.effective_internal_resolution() {
+        println!("  6. Internal Resolution Normalization (4960x7016): ENABLED");
+    }
+    if args.effective_color_correction() {
+        println!("  7. Global Color Correction: ENABLED");
+    }
+    if args.effective_offset_alignment() {
+        println!("  8. Page Number Offset Alignment: ENABLED");
+    }
+    println!("  9. PDF Generation (output height: {})", args.output_height);
     println!();
     println!("Processing Options:");
     println!("  Threads: {}", args.thread_count());
@@ -352,7 +364,295 @@ fn process_single_pdf(
         images_after_trim
     };
 
-    // Step 6: OCR with YomiToku (if enabled)
+    // === Phase 6: Advanced Processing Pipeline ===
+
+    // Step 6: Internal Resolution Normalization (if enabled)
+    let normalized_dir = work_dir.join("normalized");
+    let images_after_normalize: Vec<PathBuf> = if args.effective_internal_resolution() {
+        if verbose {
+            println!("  Normalizing to internal resolution (4960x7016)...");
+        }
+        std::fs::create_dir_all(&normalized_dir)?;
+
+        let normalize_options = NormalizeOptions::builder()
+            .target_width(4960)
+            .target_height(7016)
+            .build();
+
+        let mut normalized_images = Vec::new();
+        for (i, img_path) in images_for_pdf.iter().enumerate() {
+            let output_path = normalized_dir.join(format!("page_{:04}.png", i));
+            match ImageNormalizer::normalize(img_path, &output_path, &normalize_options) {
+                Ok(_) => {
+                    normalized_images.push(output_path);
+                }
+                Err(e) => {
+                    if verbose {
+                        println!("    Page {}: normalization failed ({}), keeping original", i + 1, e);
+                    }
+                    std::fs::copy(img_path, &output_path)?;
+                    normalized_images.push(output_path);
+                }
+            }
+        }
+
+        if verbose {
+            println!("    Normalized {} images", normalized_images.len());
+        }
+        normalized_images
+    } else {
+        images_for_pdf.clone()
+    };
+
+    // Step 7: Color Statistics Analysis and Global Color Correction (if enabled)
+    let color_corrected_dir = work_dir.join("color_corrected");
+    let images_after_color: Vec<PathBuf> = if args.effective_color_correction() {
+        if verbose {
+            println!("  Analyzing color statistics...");
+        }
+        std::fs::create_dir_all(&color_corrected_dir)?;
+
+        // Collect color statistics from all pages
+        let mut all_stats = Vec::new();
+        for (i, img_path) in images_after_normalize.iter().enumerate() {
+            match ColorAnalyzer::calculate_stats(img_path) {
+                Ok(stats) => {
+                    if verbose && args.verbose > 1 {
+                        println!(
+                            "    Page {}: paper=({:.1},{:.1},{:.1}) ink=({:.1},{:.1},{:.1})",
+                            i + 1,
+                            stats.paper_r, stats.paper_g, stats.paper_b,
+                            stats.ink_r, stats.ink_g, stats.ink_b
+                        );
+                    }
+                    all_stats.push(stats);
+                }
+                Err(e) => {
+                    if verbose {
+                        println!("    Page {}: color analysis failed ({})", i + 1, e);
+                    }
+                }
+            }
+        }
+
+        // Calculate global color adjustment parameters
+        if !all_stats.is_empty() {
+            let global_param = ColorAnalyzer::decide_global_adjustment(&all_stats);
+            if verbose {
+                println!(
+                    "    Global adjustment: scale=({:.3},{:.3},{:.3}) offset=({:.1},{:.1},{:.1})",
+                    global_param.scale_r, global_param.scale_g, global_param.scale_b,
+                    global_param.offset_r, global_param.offset_g, global_param.offset_b
+                );
+            }
+
+            // Apply color correction to all images
+            let mut corrected_images = Vec::new();
+            for (i, img_path) in images_after_normalize.iter().enumerate() {
+                let output_path = color_corrected_dir.join(format!("page_{:04}.png", i));
+                // Load image, apply adjustment, save
+                match image::open(img_path) {
+                    Ok(img) => {
+                        let mut rgb_img = img.to_rgb8();
+                        ColorAnalyzer::apply_adjustment(&mut rgb_img, &global_param);
+                        if let Err(e) = rgb_img.save(&output_path) {
+                            if verbose {
+                                println!("    Page {}: save failed ({}), keeping original", i + 1, e);
+                            }
+                            std::fs::copy(img_path, &output_path)?;
+                        }
+                        corrected_images.push(output_path);
+                    }
+                    Err(e) => {
+                        if verbose {
+                            println!("    Page {}: color correction failed ({}), keeping original", i + 1, e);
+                        }
+                        std::fs::copy(img_path, &output_path)?;
+                        corrected_images.push(output_path);
+                    }
+                }
+            }
+
+            if verbose {
+                println!("    Color corrected {} images", corrected_images.len());
+            }
+            corrected_images
+        } else {
+            images_after_normalize.clone()
+        }
+    } else {
+        images_after_normalize.clone()
+    };
+
+    // Step 8: Tukey Fence Group Crop (if offset_alignment is enabled)
+    let cropped_dir = work_dir.join("cropped");
+    let images_after_crop: Vec<PathBuf> = if args.effective_offset_alignment() {
+        if verbose {
+            println!("  Detecting text bounding boxes...");
+        }
+        std::fs::create_dir_all(&cropped_dir)?;
+
+        // Detect bounding boxes for all pages
+        let bounding_boxes = GroupCropAnalyzer::detect_all_bounding_boxes(&images_after_color, 240);
+
+        if !bounding_boxes.is_empty() {
+            // Calculate unified crop regions using Tukey fence
+            let unified = GroupCropAnalyzer::unify_odd_even_regions(&bounding_boxes);
+
+            if verbose && args.verbose > 1 {
+                println!(
+                    "    Odd pages: crop region {}x{} at ({},{}) ({} inliers)",
+                    unified.odd_region.width, unified.odd_region.height,
+                    unified.odd_region.left, unified.odd_region.top,
+                    unified.odd_region.inlier_count
+                );
+                println!(
+                    "    Even pages: crop region {}x{} at ({},{}) ({} inliers)",
+                    unified.even_region.width, unified.even_region.height,
+                    unified.even_region.left, unified.even_region.top,
+                    unified.even_region.inlier_count
+                );
+            }
+
+            // Apply crop to all images
+            let mut cropped_images = Vec::new();
+            for (i, img_path) in images_after_color.iter().enumerate() {
+                let output_path = cropped_dir.join(format!("page_{:04}.png", i));
+                let region = if i % 2 == 0 { &unified.odd_region } else { &unified.even_region };
+
+                // Use the crop region to trim the image
+                match image::open(img_path) {
+                    Ok(img) => {
+                        let cropped = img.crop_imm(
+                            region.left,
+                            region.top,
+                            region.width.min(img.width() - region.left),
+                            region.height.min(img.height() - region.top),
+                        );
+                        if let Err(e) = cropped.save(&output_path) {
+                            if verbose {
+                                println!("    Page {}: crop failed ({}), keeping original", i + 1, e);
+                            }
+                            std::fs::copy(img_path, &output_path)?;
+                        }
+                        cropped_images.push(output_path);
+                    }
+                    Err(e) => {
+                        if verbose {
+                            println!("    Page {}: image load failed ({}), keeping original", i + 1, e);
+                        }
+                        std::fs::copy(img_path, &output_path)?;
+                        cropped_images.push(output_path);
+                    }
+                }
+            }
+
+            if verbose {
+                println!("    Cropped {} images", cropped_images.len());
+            }
+            cropped_images
+        } else {
+            images_after_color.clone()
+        }
+    } else {
+        images_after_color.clone()
+    };
+
+    // Step 9: Page Number Offset Calculation (if offset_alignment is enabled)
+    let _offset_analysis = if args.effective_offset_alignment() {
+        if verbose {
+            println!("  Detecting page numbers and calculating offsets...");
+        }
+
+        // Detect page numbers using Tesseract
+        let page_options = superbook_pdf::PageNumberOptions::default();
+        let mut page_detections = Vec::new();
+        for (i, img_path) in images_after_crop.iter().enumerate() {
+            match TesseractPageDetector::detect_single(img_path, i, &page_options) {
+                Ok(detection) => {
+                    if let Some(num) = detection.number {
+                        if verbose && args.verbose > 1 {
+                            println!("    Page {}: detected number {}", i + 1, num);
+                        }
+                    }
+                    page_detections.push(detection);
+                }
+                Err(e) => {
+                    if verbose && args.verbose > 1 {
+                        println!("    Page {}: page number detection failed ({})", i + 1, e);
+                    }
+                }
+            }
+        }
+
+        // Analyze offsets
+        if !page_detections.is_empty() {
+            let first_img = image::open(&images_after_crop[0]).ok();
+            let img_height = first_img.as_ref().map(|img| img.height()).unwrap_or(7016);
+
+            let analysis = PageOffsetAnalyzer::analyze_offsets(&page_detections, img_height);
+
+            if verbose {
+                println!(
+                    "    Page number shift: {}, confidence: {:.1}%",
+                    analysis.page_number_shift,
+                    analysis.confidence * 100.0
+                );
+                if let Some(odd_x) = analysis.odd_avg_x {
+                    println!("    Odd pages avg X offset: {}", odd_x);
+                }
+                if let Some(even_x) = analysis.even_avg_x {
+                    println!("    Even pages avg X offset: {}", even_x);
+                }
+            }
+
+            Some(analysis)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Step 10: Final Output (resize with gradient padding)
+    let finalized_dir = work_dir.join("finalized");
+    let final_images: Vec<PathBuf> = if args.output_height != 0 && args.output_height != 7016 {
+        if verbose {
+            println!("  Finalizing output (height: {})...", args.output_height);
+        }
+        std::fs::create_dir_all(&finalized_dir)?;
+
+        let finalize_options = FinalizeOptions::builder()
+            .target_height(args.output_height)
+            .build();
+
+        let mut finalized_images = Vec::new();
+        for (i, img_path) in images_after_crop.iter().enumerate() {
+            let output_path = finalized_dir.join(format!("page_{:04}.png", i));
+            // finalize takes 6 args: input, output, options, crop_region, shift_x, shift_y
+            match PageFinalizer::finalize(img_path, &output_path, &finalize_options, None, 0, 0) {
+                Ok(_) => {
+                    finalized_images.push(output_path);
+                }
+                Err(e) => {
+                    if verbose {
+                        println!("    Page {}: finalize failed ({}), keeping original", i + 1, e);
+                    }
+                    std::fs::copy(img_path, &output_path)?;
+                    finalized_images.push(output_path);
+                }
+            }
+        }
+
+        if verbose {
+            println!("    Finalized {} images", finalized_images.len());
+        }
+        finalized_images
+    } else {
+        images_after_crop.clone()
+    };
+
+    // Step 11: OCR with YomiToku (if enabled)
     let ocr_results = if args.ocr {
         if verbose {
             println!("  Running OCR (YomiToku)...");
@@ -375,7 +675,7 @@ fn process_single_pdf(
                 let ocr_opts = ocr_opts.build();
 
                 let mut results = Vec::new();
-                for (i, img_path) in images_for_pdf.iter().enumerate() {
+                for (i, img_path) in final_images.iter().enumerate() {
                     match yomitoku.ocr(img_path, &ocr_opts) {
                         Ok(result) => {
                             if verbose && args.verbose > 1 {

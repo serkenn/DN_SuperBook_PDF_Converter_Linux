@@ -153,6 +153,28 @@ pub struct ConvertArgs {
     /// Show execution plan without processing
     #[arg(long)]
     pub dry_run: bool,
+
+    // === Phase 6: Advanced processing options ===
+
+    /// Enable internal resolution normalization (4960x7016)
+    #[arg(long)]
+    pub internal_resolution: bool,
+
+    /// Enable global color correction
+    #[arg(long)]
+    pub color_correction: bool,
+
+    /// Enable page number offset alignment
+    #[arg(long)]
+    pub offset_alignment: bool,
+
+    /// Output height in pixels (default: 3508)
+    #[arg(long, default_value_t = 3508)]
+    pub output_height: u32,
+
+    /// Enable advanced processing (combines internal-resolution, color-correction, offset-alignment)
+    #[arg(long)]
+    pub advanced: bool,
 }
 
 impl ConvertArgs {
@@ -174,6 +196,21 @@ impl ConvertArgs {
     /// Get thread count (default to available CPUs)
     pub fn thread_count(&self) -> usize {
         self.threads.unwrap_or_else(num_cpus::get)
+    }
+
+    /// Get effective internal resolution setting (considering --advanced flag)
+    pub fn effective_internal_resolution(&self) -> bool {
+        self.internal_resolution || self.advanced
+    }
+
+    /// Get effective color correction setting (considering --advanced flag)
+    pub fn effective_color_correction(&self) -> bool {
+        self.color_correction || self.advanced
+    }
+
+    /// Get effective offset alignment setting (considering --advanced flag)
+    pub fn effective_offset_alignment(&self) -> bool {
+        self.offset_alignment || self.advanced
     }
 }
 
@@ -1428,6 +1465,108 @@ mod tests {
             if let Commands::Convert(args) = cli.command {
                 assert_eq!(args.output.to_string_lossy(), output);
             }
+        }
+    }
+
+    // ============ Phase 6: Advanced Processing Options Tests ============
+
+    #[test]
+    fn test_internal_resolution_flag() {
+        let cli =
+            Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "--internal-resolution"])
+                .unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert!(args.internal_resolution);
+            assert!(args.effective_internal_resolution());
+        }
+    }
+
+    #[test]
+    fn test_color_correction_flag() {
+        let cli =
+            Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "--color-correction"])
+                .unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert!(args.color_correction);
+            assert!(args.effective_color_correction());
+        }
+    }
+
+    #[test]
+    fn test_offset_alignment_flag() {
+        let cli =
+            Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "--offset-alignment"])
+                .unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert!(args.offset_alignment);
+            assert!(args.effective_offset_alignment());
+        }
+    }
+
+    #[test]
+    fn test_output_height_default() {
+        let cli = Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf"]).unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert_eq!(args.output_height, 3508);
+        }
+    }
+
+    #[test]
+    fn test_output_height_custom() {
+        let cli = Cli::try_parse_from([
+            "superbook-pdf",
+            "convert",
+            "input.pdf",
+            "--output-height",
+            "7016",
+        ])
+        .unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert_eq!(args.output_height, 7016);
+        }
+    }
+
+    #[test]
+    fn test_advanced_flag_enables_all() {
+        let cli =
+            Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "--advanced"]).unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert!(args.advanced);
+            assert!(args.effective_internal_resolution());
+            assert!(args.effective_color_correction());
+            assert!(args.effective_offset_alignment());
+        }
+    }
+
+    #[test]
+    fn test_advanced_flag_combined() {
+        let cli = Cli::try_parse_from([
+            "superbook-pdf",
+            "convert",
+            "input.pdf",
+            "--advanced",
+            "--output-height",
+            "4000",
+        ])
+        .unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert!(args.advanced);
+            assert_eq!(args.output_height, 4000);
+            assert!(args.effective_internal_resolution());
+        }
+    }
+
+    #[test]
+    fn test_individual_flags_without_advanced() {
+        let cli = Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf"]).unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert!(!args.advanced);
+            assert!(!args.internal_resolution);
+            assert!(!args.color_correction);
+            assert!(!args.offset_alignment);
+            assert!(!args.effective_internal_resolution());
+            assert!(!args.effective_color_correction());
+            assert!(!args.effective_offset_alignment());
         }
     }
 }

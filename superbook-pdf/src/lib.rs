@@ -170,6 +170,14 @@ pub use yomitoku::{
     YomiTokuOptionsBuilder,
 };
 
+// Phase 1-6: Advanced processing modules
+pub use color_stats::{ColorAnalyzer, ColorStats, ColorStatsError, GlobalColorParam};
+pub use finalize::{FinalizeError, FinalizeOptions, FinalizeOptionsBuilder, FinalizeResult, PageFinalizer};
+pub use normalize::{
+    ImageNormalizer, NormalizeError, NormalizeOptions, NormalizeOptionsBuilder, NormalizeResult,
+    PaddingMode, PaperColor, Resampler,
+};
+
 /// Exit codes for CLI (deprecated: prefer using `ExitCode` enum)
 ///
 /// These constants are provided for backward compatibility.
