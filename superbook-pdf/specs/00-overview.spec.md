@@ -85,13 +85,14 @@ superbook-pdf は、スキャンされた書籍PDFを高品質なデジタル書
 
 | 項目 | 状態 | 備考 |
 |------|------|------|
-| テスト | ✅ 1,220件 | 全てパス、Clippy警告0件 |
+| テスト | ✅ 1,239件 | 全てパス、Clippy警告0件 |
 | メモリ使用量 | ✅ 0.4-0.8GB | C#版の1/30 |
 | C#→Rust移行 | ✅ 100% | 全機能移植完了 |
 | main.rs リファクタリング | ✅ 完了 | 1,234行→394行 (68%削減) |
 | パイプラインモジュール | ✅ 完了 | 13ステップ完全実装 |
 | キャッシュ機能 | ✅ 完了 | sha256ベース |
 | Poppler対応 | ✅ 完了 | ImageMagickなしでも動作 |
+| Web API (v0.4.0) | ✅ 完了 | REST API + WebUI |
 
 ## 外部依存
 
@@ -119,3 +120,25 @@ superbook-pdf は、スキャンされた書籍PDFを高品質なデジタル書
 | `--save-debug` | 中間画像を保存 |
 | `--skip-existing` | 既存ファイルをスキップ |
 | `cache-info <PDF>` | キャッシュ情報表示サブコマンド |
+| `serve` | Webサーバー起動 (--features web) |
+| `info` | システム情報表示 |
+
+## Webサーバー (v0.4.0)
+
+```bash
+# サーバー起動
+superbook-pdf serve --port 8080 --bind 0.0.0.0
+
+# ブラウザでアクセス
+open http://localhost:8080/
+```
+
+### REST API
+
+| エンドポイント | 説明 |
+|---------------|------|
+| `POST /api/convert` | PDF変換開始 |
+| `GET /api/jobs/:id` | ジョブ状態取得 |
+| `DELETE /api/jobs/:id` | ジョブキャンセル |
+| `GET /api/jobs/:id/download` | 結果ダウンロード |
+| `GET /api/health` | ヘルスチェック |

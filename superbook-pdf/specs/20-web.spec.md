@@ -238,7 +238,7 @@ Options:
 | バックグラウンド処理 | 🟢 | 完了 (WorkerPool + JobWorker) |
 | パイプライン統合 | 🟢 | 完了 (PdfPipeline + WebProgressCallback) |
 | WebUI | 🟢 | 完了 (rust-embed + ドラッグ&ドロップ) |
-| 統合テスト | 🔴 | 未着手 |
+| 統合テスト | 🟢 | 完了 (14テストケース) |
 
 ## 依存クレート
 
