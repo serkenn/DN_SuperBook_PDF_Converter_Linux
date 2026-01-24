@@ -130,6 +130,7 @@ pub mod pdf_reader;
 pub mod pdf_writer;
 pub mod realesrgan;
 pub mod util;
+pub mod vertical_detect;
 pub mod yomitoku;
 
 // Re-exports for convenience
@@ -178,6 +179,10 @@ pub use finalize::{
 pub use normalize::{
     ImageNormalizer, NormalizeError, NormalizeOptions, NormalizeOptionsBuilder, NormalizeResult,
     PaddingMode, PaperColor, Resampler,
+};
+pub use vertical_detect::{
+    detect_book_vertical_writing, detect_vertical_probability, BookVerticalResult,
+    VerticalDetectError, VerticalDetectOptions, VerticalDetectResult,
 };
 
 /// Exit codes for CLI (deprecated: prefer using `ExitCode` enum)
