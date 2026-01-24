@@ -128,6 +128,7 @@ pub mod normalize;
 pub mod page_number;
 pub mod parallel;
 pub mod pdf_reader;
+pub mod progress;
 pub mod pdf_writer;
 pub mod realesrgan;
 pub mod util;
@@ -189,6 +190,7 @@ pub use parallel::{
     parallel_map, parallel_process, ParallelError, ParallelOptions, ParallelProcessor,
     ParallelResult,
 };
+pub use progress::{build_progress_bar, OutputMode, ProcessingStage, ProgressTracker};
 
 /// Exit codes for CLI (deprecated: prefer using `ExitCode` enum)
 ///
