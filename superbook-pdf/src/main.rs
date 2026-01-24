@@ -12,8 +12,10 @@ use superbook_pdf::{
     CacheDigest, ProcessingCache, should_skip_processing,
     // CLI
     CacheInfoArgs, Cli, Commands, ConvertArgs,
+    // Config
+    CliOverrides, Config,
     // Pipeline
-    PdfPipeline, PipelineConfig, ProgressCallback,
+    PdfPipeline, ProgressCallback,
     // Progress tracking
     ProgressTracker,
 };
@@ -104,9 +106,26 @@ fn run_convert(args: &ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     let verbose = args.verbose > 0;
 
-    // Create pipeline configuration
-    let config = PipelineConfig::from_convert_args(args);
-    let pipeline = PdfPipeline::new(config);
+    // Load config file if specified, otherwise use default
+    let file_config = match &args.config {
+        Some(config_path) => {
+            match Config::load_from_path(config_path) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    eprintln!("Warning: Failed to load config file: {}", e);
+                    Config::default()
+                }
+            }
+        }
+        None => Config::load().unwrap_or_default(),
+    };
+
+    // Create CLI overrides from command-line arguments
+    let cli_overrides = create_cli_overrides(args);
+
+    // Merge config file with CLI arguments (CLI takes precedence)
+    let pipeline_config = file_config.merge_with_cli(&cli_overrides);
+    let pipeline = PdfPipeline::new(pipeline_config);
 
     // Create progress callback
     let progress = VerboseProgress::new(args.verbose.into());
@@ -206,6 +225,33 @@ fn run_convert(args: &ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 // ============ Helper Functions ============
+
+/// Create CLI overrides from ConvertArgs
+fn create_cli_overrides(args: &ConvertArgs) -> CliOverrides {
+    let mut overrides = CliOverrides::new();
+
+    // Basic options - only set if they differ from defaults
+    overrides.dpi = Some(args.dpi);
+    overrides.deskew = Some(args.effective_deskew());
+    overrides.margin_trim = Some(args.margin_trim as f64);
+    overrides.upscale = Some(args.effective_upscale());
+    overrides.gpu = Some(args.effective_gpu());
+    overrides.ocr = Some(args.ocr);
+    overrides.threads = args.threads;
+
+    // Advanced options
+    overrides.internal_resolution = Some(args.effective_internal_resolution());
+    overrides.color_correction = Some(args.effective_color_correction());
+    overrides.offset_alignment = Some(args.effective_offset_alignment());
+    overrides.output_height = Some(args.output_height);
+    overrides.jpeg_quality = Some(args.jpeg_quality);
+
+    // Debug options
+    overrides.max_pages = args.max_pages;
+    overrides.save_debug = Some(args.save_debug);
+
+    overrides
+}
 
 /// Collect PDF files from input path (file or directory)
 fn collect_pdf_files(input: &PathBuf) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
