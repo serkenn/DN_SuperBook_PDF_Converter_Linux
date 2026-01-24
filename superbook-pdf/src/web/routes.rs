@@ -131,7 +131,7 @@ async fn upload_and_convert(
     let file_data = file_data.ok_or_else(|| AppError::BadRequest("No file data".to_string()))?;
 
     // Create job
-    let job = Job::new(&filename, options);
+    let job = Job::new(&filename, options.clone());
     let job_id = job.id;
     let created_at = job.created_at.to_rfc3339();
 
@@ -145,7 +145,7 @@ async fn upload_and_convert(
     state.queue.submit(job);
 
     // Trigger background processing
-    if let Err(e) = state.worker_pool.submit(job_id, input_path).await {
+    if let Err(e) = state.worker_pool.submit(job_id, input_path, options).await {
         // Update job as failed if we couldn't submit
         state.queue.update(job_id, |job| {
             job.fail(format!("Failed to start processing: {}", e));

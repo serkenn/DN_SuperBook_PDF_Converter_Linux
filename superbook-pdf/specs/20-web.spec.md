@@ -236,7 +236,7 @@ Options:
 | ジョブキュー | 🟢 | 完了 (25テスト) |
 | CLIコマンド | 🟢 | 完了 (serve サブコマンド) |
 | バックグラウンド処理 | 🟢 | 完了 (WorkerPool + JobWorker) |
-| パイプライン統合 | 🟡 | シミュレーション実装、実PDFパイプライン未連携 |
+| パイプライン統合 | 🟢 | 完了 (PdfPipeline + WebProgressCallback) |
 | WebUI | 🔴 | 未着手 |
 | 統合テスト | 🔴 | 未着手 |
 

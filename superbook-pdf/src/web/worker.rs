@@ -3,11 +3,13 @@
 //! Handles the actual PDF conversion in a background task.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::job::{JobQueue, JobStatus, Progress};
+use super::job::{ConvertOptions, JobQueue, JobStatus, Progress};
+use crate::pipeline::{PdfPipeline, PipelineConfig, ProgressCallback};
 
 /// Worker message types
 #[derive(Debug)]
@@ -16,9 +18,81 @@ pub enum WorkerMessage {
     Process {
         job_id: Uuid,
         input_path: PathBuf,
+        options: ConvertOptions,
     },
     /// Shutdown the worker
     Shutdown,
+}
+
+/// Progress callback that updates the job queue
+struct WebProgressCallback {
+    job_id: Uuid,
+    queue: JobQueue,
+    current_step: AtomicU32,
+    total_steps: AtomicU32,
+    step_progress: AtomicUsize,
+    step_total: AtomicUsize,
+}
+
+impl WebProgressCallback {
+    fn new(job_id: Uuid, queue: JobQueue) -> Self {
+        Self {
+            job_id,
+            queue,
+            current_step: AtomicU32::new(1),
+            total_steps: AtomicU32::new(13),
+            step_progress: AtomicUsize::new(0),
+            step_total: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl ProgressCallback for WebProgressCallback {
+    fn on_step_start(&self, step: &str) {
+        let current = self.current_step.fetch_add(1, Ordering::Relaxed);
+        let total = self.total_steps.load(Ordering::Relaxed);
+        self.step_progress.store(0, Ordering::Relaxed);
+        self.step_total.store(0, Ordering::Relaxed);
+
+        let progress = Progress::new(current, total, step);
+        self.queue.update(self.job_id, |job| {
+            job.update_progress(progress);
+        });
+    }
+
+    fn on_step_progress(&self, current: usize, total: usize) {
+        self.step_progress.store(current, Ordering::Relaxed);
+        self.step_total.store(total, Ordering::Relaxed);
+    }
+
+    fn on_step_complete(&self, _step: &str, _message: &str) {
+        // Step completion is handled by on_step_start of next step
+    }
+
+    fn on_debug(&self, _message: &str) {
+        // Debug messages not shown in web UI
+    }
+}
+
+/// Convert web ConvertOptions to pipeline PipelineConfig
+fn to_pipeline_config(options: &ConvertOptions) -> PipelineConfig {
+    let advanced = options.advanced;
+    PipelineConfig {
+        dpi: options.dpi,
+        deskew: options.deskew,
+        margin_trim: 0.5,
+        upscale: options.upscale,
+        gpu: true,
+        internal_resolution: advanced,
+        color_correction: advanced,
+        offset_alignment: advanced,
+        output_height: 3508,
+        ocr: options.ocr,
+        max_pages: None,
+        save_debug: false,
+        jpeg_quality: 90,
+        threads: None,
+    }
 }
 
 /// Background worker for job processing
@@ -46,8 +120,12 @@ impl JobWorker {
     pub async fn run(mut self) {
         while let Some(msg) = self.receiver.recv().await {
             match msg {
-                WorkerMessage::Process { job_id, input_path } => {
-                    self.process_job(job_id, input_path).await;
+                WorkerMessage::Process {
+                    job_id,
+                    input_path,
+                    options,
+                } => {
+                    self.process_job(job_id, input_path, options).await;
                 }
                 WorkerMessage::Shutdown => {
                     break;
@@ -56,61 +134,64 @@ impl JobWorker {
         }
     }
 
-    /// Process a single job
-    async fn process_job(&self, job_id: Uuid, _input_path: PathBuf) {
+    /// Process a single job with actual pipeline
+    pub async fn process_job(&self, job_id: Uuid, input_path: PathBuf, options: ConvertOptions) {
         // Mark job as processing
         self.queue.update(job_id, |job| {
             job.start();
-            job.update_progress(Progress::new(1, 12, "Starting"));
+            job.update_progress(Progress::new(1, 13, "Starting"));
         });
 
-        // Simulate processing steps (TODO: integrate with actual pipeline)
-        let steps = [
-            "PDF Reading",
-            "Image Extraction",
-            "Deskew Detection",
-            "Margin Trimming",
-            "AI Upscaling",
-            "Normalization",
-            "Color Correction",
-            "Group Crop",
-            "Page Offset",
-            "Finalize",
-            "PDF Generation",
-            "Complete",
-        ];
-
-        for (i, step) in steps.iter().enumerate() {
-            // Check if job was cancelled
-            if let Some(job) = self.queue.get(job_id) {
-                if job.status == JobStatus::Cancelled {
-                    return;
-                }
+        // Check if job was cancelled
+        if let Some(job) = self.queue.get(job_id) {
+            if job.status == JobStatus::Cancelled {
+                return;
             }
-
-            // Update progress
-            self.queue.update(job_id, |job| {
-                job.update_progress(Progress::new((i + 1) as u32, 12, *step));
-            });
-
-            // Simulate processing time
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
 
-        // Mark as complete (TODO: actual output path)
-        let output_path = self.work_dir.join(format!("{}_converted.pdf", job_id));
-
-        // For now, just create an empty file as placeholder
-        if let Err(e) = std::fs::write(&output_path, b"placeholder") {
+        // Create output directory
+        let output_dir = self.work_dir.join("output");
+        if let Err(e) = std::fs::create_dir_all(&output_dir) {
             self.queue.update(job_id, |job| {
-                job.fail(format!("Failed to write output: {}", e));
+                job.fail(format!("Failed to create output directory: {}", e));
             });
             return;
         }
 
-        self.queue.update(job_id, |job| {
-            job.complete(output_path);
-        });
+        // Convert options to pipeline config
+        let config = to_pipeline_config(&options);
+        let pipeline = PdfPipeline::new(config);
+
+        // Create progress callback
+        let progress = WebProgressCallback::new(job_id, self.queue.clone());
+
+        // Run pipeline in blocking task (pipeline uses rayon internally)
+        let queue = self.queue.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            pipeline.process_with_progress(&input_path, &output_dir, &progress)
+        })
+        .await;
+
+        match result {
+            Ok(Ok(pipeline_result)) => {
+                // Pipeline succeeded
+                self.queue.update(job_id, |job| {
+                    job.complete(pipeline_result.output_path);
+                });
+            }
+            Ok(Err(e)) => {
+                // Pipeline error
+                queue.update(job_id, |job| {
+                    job.fail(format!("Pipeline error: {}", e));
+                });
+            }
+            Err(e) => {
+                // Task panic
+                queue.update(job_id, |job| {
+                    job.fail(format!("Task panic: {}", e));
+                });
+            }
+        }
     }
 }
 
@@ -141,11 +222,15 @@ impl WorkerPool {
                     };
 
                     match msg {
-                        Some(WorkerMessage::Process { job_id, input_path }) => {
+                        Some(WorkerMessage::Process {
+                            job_id,
+                            input_path,
+                            options,
+                        }) => {
                             // Create a temporary worker for this job
                             let (_, dummy_rx) = mpsc::channel(1);
                             let worker = JobWorker::new(queue.clone(), dummy_rx, work_dir.clone());
-                            worker.process_job(job_id, input_path).await;
+                            worker.process_job(job_id, input_path, options).await;
                         }
                         Some(WorkerMessage::Shutdown) | None => {
                             break;
@@ -159,9 +244,18 @@ impl WorkerPool {
     }
 
     /// Submit a job for processing
-    pub async fn submit(&self, job_id: Uuid, input_path: PathBuf) -> Result<(), String> {
+    pub async fn submit(
+        &self,
+        job_id: Uuid,
+        input_path: PathBuf,
+        options: ConvertOptions,
+    ) -> Result<(), String> {
         self.sender
-            .send(WorkerMessage::Process { job_id, input_path })
+            .send(WorkerMessage::Process {
+                job_id,
+                input_path,
+                options,
+            })
             .await
             .map_err(|e| format!("Failed to submit job: {}", e))
     }
@@ -181,13 +275,14 @@ impl WorkerPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::web::job::{ConvertOptions, Job};
+    use crate::web::job::Job;
 
     #[tokio::test]
     async fn test_worker_message_debug() {
         let msg = WorkerMessage::Process {
             job_id: Uuid::new_v4(),
             input_path: PathBuf::from("/test.pdf"),
+            options: ConvertOptions::default(),
         };
         let debug = format!("{:?}", msg);
         assert!(debug.contains("Process"));
@@ -202,32 +297,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_job_processing() {
+    async fn test_convert_options_to_pipeline_config() {
+        let options = ConvertOptions::default();
+        let config = to_pipeline_config(&options);
+
+        assert_eq!(config.dpi, 300);
+        assert!(config.deskew);
+        assert!(config.upscale);
+        assert!(!config.ocr);
+        assert!(!config.internal_resolution);
+    }
+
+    #[tokio::test]
+    async fn test_convert_options_advanced() {
+        let options = ConvertOptions {
+            dpi: 600,
+            deskew: true,
+            upscale: true,
+            ocr: true,
+            advanced: true,
+        };
+        let config = to_pipeline_config(&options);
+
+        assert_eq!(config.dpi, 600);
+        assert!(config.internal_resolution);
+        assert!(config.color_correction);
+        assert!(config.offset_alignment);
+        assert!(config.ocr);
+    }
+
+    #[tokio::test]
+    async fn test_job_processing_with_invalid_pdf() {
         let queue = JobQueue::new();
-        let work_dir = std::env::temp_dir().join("superbook_test");
+        let work_dir = std::env::temp_dir().join("superbook_test_worker");
         std::fs::create_dir_all(&work_dir).ok();
 
         let pool = WorkerPool::new(queue.clone(), work_dir.clone(), 1);
 
         // Create a job
-        let job = Job::new("test.pdf", ConvertOptions::default());
+        let options = ConvertOptions::default();
+        let job = Job::new("test.pdf", options.clone());
         let job_id = job.id;
         queue.submit(job);
 
-        // Submit for processing
-        let input_path = work_dir.join("test_input.pdf");
-        std::fs::write(&input_path, b"test pdf content").ok();
+        // Submit for processing with invalid PDF
+        let input_path = work_dir.join("invalid.pdf");
+        std::fs::write(&input_path, b"not a valid pdf").ok();
 
-        pool.submit(job_id, input_path).await.unwrap();
+        pool.submit(job_id, input_path, options).await.unwrap();
 
-        // Wait a bit for processing
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        // Wait for processing
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
-        // Check job status
+        // Job should fail because input is not a valid PDF
         let job = queue.get(job_id).unwrap();
         assert!(
-            job.status == JobStatus::Completed || job.status == JobStatus::Processing,
-            "Job should be completed or processing, got {:?}",
+            job.status == JobStatus::Failed || job.status == JobStatus::Processing,
+            "Job should be failed or still processing, got {:?}",
             job.status
         );
 
