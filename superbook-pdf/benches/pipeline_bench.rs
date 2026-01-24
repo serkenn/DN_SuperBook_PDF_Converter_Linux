@@ -296,6 +296,139 @@ fn bench_exit_codes(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark Phase 1: Normalize module structures
+fn bench_normalize_structures(c: &mut Criterion) {
+    use superbook_pdf::{NormalizeOptions, PaddingMode, PaperColor, Resampler};
+
+    let mut group = c.benchmark_group("normalize_structures");
+
+    group.bench_function("NormalizeOptions::builder", |b| {
+        b.iter(|| {
+            black_box(
+                NormalizeOptions::builder()
+                    .target_width(4960)
+                    .target_height(7016)
+                    .resampler(Resampler::Lanczos3)
+                    .padding_mode(PaddingMode::Gradient)
+                    .build(),
+            )
+        })
+    });
+
+    group.bench_function("PaperColor::new", |b| {
+        b.iter(|| black_box(PaperColor { r: 255, g: 250, b: 245 }))
+    });
+
+    group.finish();
+}
+
+/// Benchmark Phase 2: Color stats module structures
+fn bench_color_stats_structures(c: &mut Criterion) {
+    use superbook_pdf::{ColorStats, GlobalColorParam};
+
+    let mut group = c.benchmark_group("color_stats_structures");
+
+    group.bench_function("ColorStats::default", |b| {
+        b.iter(|| black_box(ColorStats::default()))
+    });
+
+    group.bench_function("GlobalColorParam::default", |b| {
+        b.iter(|| black_box(GlobalColorParam::default()))
+    });
+
+    group.finish();
+}
+
+/// Benchmark Phase 3: Group crop structures
+fn bench_group_crop_structures(c: &mut Criterion) {
+    use superbook_pdf::{GroupCropRegion, PageBoundingBox, UnifiedCropRegions};
+    use superbook_pdf::margin::ContentRect;
+
+    let mut group = c.benchmark_group("group_crop_structures");
+
+    group.bench_function("PageBoundingBox::new", |b| {
+        b.iter(|| {
+            black_box(PageBoundingBox {
+                page_number: 1,
+                bounding_box: ContentRect { x: 100, y: 100, width: 1800, height: 2400 },
+                is_odd: true,
+            })
+        })
+    });
+
+    group.bench_function("GroupCropRegion::default", |b| {
+        b.iter(|| black_box(GroupCropRegion::default()))
+    });
+
+    group.bench_function("UnifiedCropRegions::new", |b| {
+        b.iter(|| {
+            black_box(UnifiedCropRegions {
+                odd_region: GroupCropRegion::default(),
+                even_region: GroupCropRegion::default(),
+            })
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark Phase 4: Page offset structures
+fn bench_page_offset_structures(c: &mut Criterion) {
+    use superbook_pdf::{BookOffsetAnalysis, PageOffsetResult};
+
+    let mut group = c.benchmark_group("page_offset_structures");
+
+    group.bench_function("PageOffsetResult::new", |b| {
+        b.iter(|| {
+            black_box(PageOffsetResult {
+                physical_page: 0,
+                logical_page: Some(1),
+                shift_x: 10,
+                shift_y: -5,
+                page_number_position: None,
+                is_odd: true,
+            })
+        })
+    });
+
+    group.bench_function("BookOffsetAnalysis::default", |b| {
+        b.iter(|| {
+            black_box(BookOffsetAnalysis {
+                page_number_shift: 0,
+                page_offsets: Vec::new(),
+                odd_avg_x: None,
+                even_avg_x: None,
+                odd_avg_y: None,
+                even_avg_y: None,
+                match_count: 0,
+                confidence: 0.0,
+            })
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark Phase 5: Finalize module structures
+fn bench_finalize_structures(c: &mut Criterion) {
+    use superbook_pdf::FinalizeOptions;
+
+    let mut group = c.benchmark_group("finalize_structures");
+
+    group.bench_function("FinalizeOptions::builder", |b| {
+        b.iter(|| {
+            black_box(
+                FinalizeOptions::builder()
+                    .target_height(3508)
+                    .margin_percent(0)
+                    .build(),
+            )
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_option_builders,
@@ -307,6 +440,12 @@ criterion_group!(
     bench_page_number_parsing,
     bench_pdf_metadata,
     bench_exit_codes,
+    // Phase 1-5 benchmarks
+    bench_normalize_structures,
+    bench_color_stats_structures,
+    bench_group_crop_structures,
+    bench_page_offset_structures,
+    bench_finalize_structures,
 );
 
 criterion_main!(benches);
