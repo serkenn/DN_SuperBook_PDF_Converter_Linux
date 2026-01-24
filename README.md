@@ -1,7 +1,43 @@
+# DN_SuperBook_PDF_Converter_Linux
+
+> **Fork of [dnobori/DN_SuperBook_PDF_Converter](https://github.com/dnobori/DN_SuperBook_PDF_Converter)**
+>
+> Linux + Podman/Docker + NVIDIA GPU 環境に最適化した Fork です。
+
+---
+
+## このForkの特徴
+
+| 特徴 | 説明 |
+|------|------|
+| **コンテナ化** | Podman/Docker でワンコマンド実行。環境構築の手間を大幅削減 |
+| **GPU 最適化** | NVIDIA Container Toolkit (CDI) 対応。CUDA GPU をフル活用 |
+| **Rust リライト** | メモリ効率の根本改善 (10-30GB → 1-3GB 目標) + 高速化 |
+| **Web UI** | ブラウザからドラッグ&ドロップで PDF 変換 (開発中) |
+| **TDD 開発** | 仕様ドリブンのテスト駆動開発で品質を担保 |
+
+### クイックスタート
+
+```bash
+# リポジトリをクローン
+git clone --recursive https://github.com/clearclown/DN_SuperBook_PDF_Converter_Linux.git
+cd DN_SuperBook_PDF_Converter_Linux
+
+# Task をインストール (https://taskfile.dev/)
+# Ubuntu/Debian: sudo snap install task --classic
+
+# 環境確認 → ビルド → 変換
+task check && task build
+task convert INPUT_DIR=./input OUTPUT_DIR=./output
+```
+
+詳細: [セクション 11. Linux 対応版について](#11-linux-対応版について-fork) | [セクション 12. Rust 完全リライト計画](#12-rust-完全リライト計画-next-generation)
+
+---
 
 # 1. DN_SuperBook_PDF_Converter - スキャン書籍 PDF をデジタル書籍並みに大変クリアに読みやすくする AI PDF 高品質化・各種調整ツール
 
-2026/01/22 登 大遊
+**オリジナル著者:** 登 大遊 (2026/01/22)
 
 <p>　</p>
 
