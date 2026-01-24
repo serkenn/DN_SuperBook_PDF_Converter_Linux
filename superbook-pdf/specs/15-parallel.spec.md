@@ -10,6 +10,8 @@ CPU コア数を活用して処理速度を向上させる。
 | 機能 | 状態 | 備考 |
 |------|------|------|
 | parallel.rs モジュール | ✅ | ParallelProcessor, ParallelResult |
+| Step 3: Deskew | ✅ | par_iter + zip |
+| Step 4: マージントリム | ✅ | par_iter + zip |
 | Step 6: 正規化 | ✅ | par_iter + zip |
 | Step 7: 色統計収集 | ✅ | par_iter + enumerate |
 | Step 7: 色補正適用 | ✅ | par_iter + zip |
@@ -22,7 +24,7 @@ CPU コア数を活用して処理速度を向上させる。
 | TC ID | テスト項目 | 優先度 | 状態 |
 |-------|-----------|--------|------|
 | PAR-001 | 並列画像抽出 | 高 | ✅ |
-| PAR-002 | 並列Deskew処理 | 高 | - |
+| PAR-002 | 並列Deskew処理 | 高 | ✅ |
 | PAR-003 | 並列正規化処理 | 高 | ✅ |
 | PAR-004 | 並列色補正 | 中 | ✅ |
 | PAR-005 | 並列マージン検出 | 中 | ✅ |
