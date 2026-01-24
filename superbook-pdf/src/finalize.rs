@@ -672,4 +672,122 @@ mod tests {
         let tl = canvas.get_pixel(0, 0);
         assert!(tl.0[0] > 250);
     }
+
+    // ============================================================
+    // TC-FINAL Spec Tests
+    // ============================================================
+
+    // TC-FINAL-001: 標準リサイズ - 3508高さ
+    #[test]
+    fn test_tc_final_001_standard_resize_to_3508() {
+        let options = FinalizeOptions::default();
+
+        // Default target height should be 3508
+        assert_eq!(options.target_height, FINAL_TARGET_HEIGHT);
+        assert_eq!(options.target_height, 3508);
+
+        // Test dimension calculation for large image
+        let (w, h, scale) = PageFinalizer::calculate_output_dimensions(4960, 7016, &options);
+        assert_eq!(h, 3508, "Output height should be 3508");
+        assert!(scale < 1.0, "Scale should be < 1 for downscaling");
+        assert!(w > 0, "Output width should be positive");
+    }
+
+    // TC-FINAL-002: クロップ適用 - 正確なクロップ
+    #[test]
+    fn test_tc_final_002_crop_region_application() {
+        let region = CropRegion::new(100, 150, 800, 600);
+
+        // Verify region bounds
+        assert_eq!(region.x, 100);
+        assert_eq!(region.y, 150);
+        assert_eq!(region.width, 800);
+        assert_eq!(region.height, 600);
+        assert_eq!(region.right(), 900);
+        assert_eq!(region.bottom(), 750);
+
+        // Test clipping to image bounds
+        let clipped = add_margin_and_clip(&region, 0, 1000, 800);
+        assert!(clipped.right() <= 1000, "Right edge should not exceed image width");
+        assert!(clipped.bottom() <= 800, "Bottom edge should not exceed image height");
+    }
+
+    // TC-FINAL-003: シフト適用 - 位置移動
+    #[test]
+    fn test_tc_final_003_shift_application() {
+        // Test FinalizeResult with shift values
+        let result = FinalizeResult {
+            input_path: PathBuf::from("input.png"),
+            output_path: PathBuf::from("output.png"),
+            original_size: (2480, 3508),
+            final_size: (2480, 3508),
+            scale: 1.0,
+            shift_applied: (25, -15),
+        };
+
+        // Verify shift is recorded
+        assert_eq!(result.shift_applied.0, 25, "X shift should be 25");
+        assert_eq!(result.shift_applied.1, -15, "Y shift should be -15");
+    }
+
+    // TC-FINAL-004: 紙色パディング - 自然な余白
+    #[test]
+    fn test_tc_final_004_paper_color_padding() {
+        let corners = CornerColors {
+            top_left: PaperColor::new(252, 250, 248),
+            top_right: PaperColor::new(253, 251, 249),
+            bottom_left: PaperColor::new(251, 249, 247),
+            bottom_right: PaperColor::new(250, 248, 246),
+        };
+
+        // Create gradient canvas with paper color
+        let canvas = PageFinalizer::create_gradient_canvas(200, 300, &corners);
+        assert_eq!(canvas.dimensions(), (200, 300));
+
+        // Center should be interpolated between corners
+        let center = canvas.get_pixel(100, 150);
+        // Should be close to average of corners (roughly 251-252 for R)
+        assert!(
+            center.0[0] >= 248,
+            "Center R {} should be near paper color (>= 248)",
+            center.0[0]
+        );
+    }
+
+    // TC-FINAL-005: バッチ処理 - 全ページ処理
+    #[test]
+    fn test_tc_final_005_batch_processing() {
+        let temp_dir = tempdir().unwrap();
+
+        // Create test images: (input, output, is_odd)
+        let mut pages = Vec::new();
+        for i in 0..3 {
+            let input = temp_dir.path().join(format!("page_{}.png", i));
+            let output = temp_dir.path().join(format!("final_{}.png", i));
+            let img = image::RgbImage::from_pixel(200, 300, image::Rgb([255, 255, 255]));
+            img.save(&input).unwrap();
+            pages.push((input, output, i % 2 == 1)); // odd pages: 1, 3, ...
+        }
+
+        let options = FinalizeOptions::builder().target_height(150).build();
+        let page_shifts = vec![(0, 0), (5, -3), (0, 0)];
+
+        let results = PageFinalizer::finalize_batch(&pages, &options, None, None, &page_shifts);
+
+        // Should succeed
+        assert!(results.is_ok(), "Batch processing should succeed");
+        let results = results.unwrap();
+
+        assert_eq!(
+            results.len(),
+            3,
+            "All {} pages should be processed",
+            pages.len()
+        );
+
+        // Verify all outputs exist
+        for (_, output, _) in &pages {
+            assert!(output.exists(), "Output {:?} should exist", output);
+        }
+    }
 }

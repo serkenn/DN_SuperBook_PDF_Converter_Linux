@@ -850,4 +850,115 @@ mod tests {
             assert!((detection.angle - angle).abs() < f64::EPSILON);
         }
     }
+
+    // ============================================================
+    // TC-DSK Additional Spec Tests
+    // ============================================================
+
+    // TC-DSK-007: 背景色設定
+    #[test]
+    fn test_tc_dsk_007_background_color_setting() {
+        // Test DeskewOptions with different background colors
+        let black_opts = DeskewOptions::builder()
+            .background_color([0, 0, 0])
+            .build();
+        assert_eq!(black_opts.background_color, [0, 0, 0]);
+
+        let white_opts = DeskewOptions::builder()
+            .background_color([255, 255, 255])
+            .build();
+        assert_eq!(white_opts.background_color, [255, 255, 255]);
+
+        let custom_opts = DeskewOptions::builder()
+            .background_color([128, 128, 128])
+            .build();
+        assert_eq!(custom_opts.background_color, [128, 128, 128]);
+
+        // Default should be white
+        let default_opts = DeskewOptions::default();
+        assert_eq!(default_opts.background_color, [255, 255, 255]);
+    }
+
+    // TC-DSK-008: 品質モード比較
+    #[test]
+    fn test_tc_dsk_008_quality_modes() {
+        let modes = [
+            QualityMode::Fast,
+            QualityMode::Standard,
+            QualityMode::HighQuality,
+        ];
+
+        for mode in modes {
+            let opts = DeskewOptions::builder().quality_mode(mode).build();
+            // Verify mode is set correctly by pattern matching
+            match mode {
+                QualityMode::Fast => {
+                    assert!(matches!(opts.quality_mode, QualityMode::Fast))
+                }
+                QualityMode::Standard => {
+                    assert!(matches!(opts.quality_mode, QualityMode::Standard))
+                }
+                QualityMode::HighQuality => {
+                    assert!(matches!(opts.quality_mode, QualityMode::HighQuality))
+                }
+            }
+        }
+
+        // Default should be Standard
+        let default_opts = DeskewOptions::default();
+        assert!(matches!(default_opts.quality_mode, QualityMode::Standard));
+
+        // Fast preset should use Fast mode
+        let fast_opts = DeskewOptions::fast();
+        assert!(matches!(fast_opts.quality_mode, QualityMode::Fast));
+
+        // High quality preset should use HighQuality mode
+        let hq_opts = DeskewOptions::high_quality();
+        assert!(matches!(hq_opts.quality_mode, QualityMode::HighQuality));
+    }
+
+    // TC-DSK-010: 異なるアルゴリズム
+    #[test]
+    fn test_tc_dsk_010_different_algorithms() {
+        let algorithms = [
+            DeskewAlgorithm::HoughLines,
+            DeskewAlgorithm::ProjectionProfile,
+            DeskewAlgorithm::TextLineDetection,
+            DeskewAlgorithm::Combined,
+        ];
+
+        for algorithm in algorithms {
+            let opts = DeskewOptions::builder().algorithm(algorithm).build();
+            // Verify algorithm is set correctly
+            match algorithm {
+                DeskewAlgorithm::HoughLines => {
+                    assert!(matches!(opts.algorithm, DeskewAlgorithm::HoughLines))
+                }
+                DeskewAlgorithm::ProjectionProfile => {
+                    assert!(matches!(opts.algorithm, DeskewAlgorithm::ProjectionProfile))
+                }
+                DeskewAlgorithm::TextLineDetection => {
+                    assert!(matches!(opts.algorithm, DeskewAlgorithm::TextLineDetection))
+                }
+                DeskewAlgorithm::Combined => {
+                    assert!(matches!(opts.algorithm, DeskewAlgorithm::Combined))
+                }
+            }
+        }
+
+        // Default should be HoughLines
+        let default_opts = DeskewOptions::default();
+        assert!(matches!(default_opts.algorithm, DeskewAlgorithm::HoughLines));
+
+        // Fast preset uses ProjectionProfile
+        let fast_opts = DeskewOptions::fast();
+        assert!(matches!(
+            fast_opts.algorithm,
+            DeskewAlgorithm::ProjectionProfile
+        ));
+
+        // High quality preset uses Combined
+        let hq_opts = DeskewOptions::high_quality();
+        assert!(matches!(hq_opts.algorithm, DeskewAlgorithm::Combined));
+    }
 }

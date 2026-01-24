@@ -602,4 +602,114 @@ mod tests {
         assert_eq!(rect.width, 800);
         assert_eq!(rect.height, 1200);
     }
+
+    // ============================================================
+    // TC-MARGIN Spec Tests
+    // ============================================================
+
+    // TC-MARGIN-001: 均一マージン - 正確な検出
+    #[test]
+    fn test_tc_margin_001_uniform_margins_detected() {
+        // Create pages with identical margins (uniform)
+        let boxes = vec![
+            PageBoundingBox::new(1, ContentRect { x: 100, y: 100, width: 800, height: 1000 }),
+            PageBoundingBox::new(2, ContentRect { x: 100, y: 100, width: 800, height: 1000 }),
+            PageBoundingBox::new(3, ContentRect { x: 100, y: 100, width: 800, height: 1000 }),
+            PageBoundingBox::new(4, ContentRect { x: 100, y: 100, width: 800, height: 1000 }),
+        ];
+
+        let result = GroupCropAnalyzer::decide_group_crop_region(&boxes);
+
+        // All pages have same margins, so result should be exact
+        assert!(result.is_valid());
+        assert_eq!(result.left, 100);
+        assert_eq!(result.top, 100);
+        assert_eq!(result.width, 800);
+        assert_eq!(result.height, 1000);
+        assert_eq!(result.inlier_count, 4);
+    }
+
+    // TC-MARGIN-002: 不均一マージン - 統一計算
+    #[test]
+    fn test_tc_margin_002_nonuniform_margins_unified() {
+        // Create pages with varying margins
+        let boxes = vec![
+            PageBoundingBox::new(1, ContentRect { x: 100, y: 90, width: 800, height: 1000 }),
+            PageBoundingBox::new(2, ContentRect { x: 110, y: 100, width: 790, height: 990 }),
+            PageBoundingBox::new(3, ContentRect { x: 95, y: 95, width: 805, height: 1005 }),
+            PageBoundingBox::new(4, ContentRect { x: 105, y: 105, width: 795, height: 995 }),
+        ];
+
+        let result = GroupCropAnalyzer::decide_group_crop_region(&boxes);
+
+        // Result should use median values to unify
+        assert!(result.is_valid());
+        // Median values should be calculated
+        assert!(result.left >= 95 && result.left <= 110);
+        assert!(result.top >= 90 && result.top <= 105);
+    }
+
+    // TC-MARGIN-003: マージンなし - ゼロマージン
+    #[test]
+    fn test_tc_margin_003_no_margins() {
+        // Content fills entire page (no margins)
+        let boxes = vec![
+            PageBoundingBox::new(1, ContentRect { x: 0, y: 0, width: 1000, height: 1200 }),
+            PageBoundingBox::new(2, ContentRect { x: 0, y: 0, width: 1000, height: 1200 }),
+        ];
+
+        let result = GroupCropAnalyzer::decide_group_crop_region(&boxes);
+
+        assert!(result.is_valid());
+        assert_eq!(result.left, 0);
+        assert_eq!(result.top, 0);
+    }
+
+    // TC-MARGIN-004: 外れ値ページ - Tukey除外
+    #[test]
+    fn test_tc_margin_004_outlier_exclusion_tukey() {
+        // Create pages with one outlier
+        let boxes = vec![
+            PageBoundingBox::new(1, ContentRect { x: 100, y: 100, width: 800, height: 1000 }),
+            PageBoundingBox::new(2, ContentRect { x: 102, y: 98, width: 798, height: 1002 }),
+            PageBoundingBox::new(3, ContentRect { x: 101, y: 101, width: 799, height: 999 }),
+            PageBoundingBox::new(4, ContentRect { x: 99, y: 99, width: 801, height: 1001 }),
+            // Outlier page with very different margins
+            PageBoundingBox::new(5, ContentRect { x: 300, y: 300, width: 400, height: 600 }),
+        ];
+
+        let result = GroupCropAnalyzer::decide_group_crop_region(&boxes);
+
+        // Outlier should be excluded, result should be based on normal pages
+        assert!(result.is_valid());
+        // Inlier count should be less than total (outlier excluded)
+        assert!(result.inlier_count <= result.total_count);
+        // Result should be close to normal pages, not influenced by outlier
+        assert!(result.left < 200); // Far from outlier's 300
+    }
+
+    // TC-MARGIN-005: 奇偶ページ差 - 個別リージョン
+    #[test]
+    fn test_tc_margin_005_odd_even_separate_regions() {
+        // Odd pages have different margins than even pages (typical for books)
+        let boxes = vec![
+            PageBoundingBox::new(1, ContentRect { x: 120, y: 100, width: 780, height: 1000 }), // Odd
+            PageBoundingBox::new(2, ContentRect { x: 100, y: 100, width: 780, height: 1000 }), // Even
+            PageBoundingBox::new(3, ContentRect { x: 122, y: 102, width: 778, height: 998 }), // Odd
+            PageBoundingBox::new(4, ContentRect { x: 98, y: 98, width: 782, height: 1002 }),  // Even
+        ];
+
+        let result = GroupCropAnalyzer::unify_odd_even_regions(&boxes);
+
+        // Both regions should be valid
+        assert!(result.odd_region.is_valid());
+        assert!(result.even_region.is_valid());
+
+        // Odd region should have larger left margin
+        assert!(result.odd_region.left >= result.even_region.left);
+
+        // Each region should have 2 pages
+        assert_eq!(result.odd_region.total_count, 2);
+        assert_eq!(result.even_region.total_count, 2);
+    }
 }

@@ -799,4 +799,261 @@ mod tests {
         let _err2 = ColorStatsError::InvalidImage("bad".to_string());
         let _err3 = ColorStatsError::NoValidPages;
     }
+
+    // ============================================================
+    // Spec TC ID Tests
+    // ============================================================
+
+    // TC-COLOR-001: 白背景・黒文字 - paper≈255, ink≈0
+    #[test]
+    fn test_tc_color_001_white_background_black_text() {
+        // Create image with mostly white background and some black pixels
+        let mut img = RgbImage::from_pixel(100, 100, Rgb([255, 255, 255]));
+        // Add some black "text" pixels
+        for y in 40..60 {
+            for x in 20..80 {
+                img.put_pixel(x, y, Rgb([0, 0, 0]));
+            }
+        }
+
+        let stats = ColorAnalyzer::calculate_stats_from_image(&img, 1);
+
+        // Paper should be close to white (255)
+        assert!(
+            stats.paper_luminance() > 240.0,
+            "Paper luminance {} should be > 240",
+            stats.paper_luminance()
+        );
+
+        // Ink should be close to black (0)
+        assert!(
+            stats.ink_luminance() < 30.0,
+            "Ink luminance {} should be < 30",
+            stats.ink_luminance()
+        );
+    }
+
+    // TC-COLOR-002: 黄ばんだ紙 - paper<255, 補正で白化
+    #[test]
+    fn test_tc_color_002_yellowed_paper_correction() {
+        // Create image with yellowed paper (cream/beige tint)
+        let mut img = RgbImage::from_pixel(100, 100, Rgb([245, 235, 210])); // Yellowed paper
+        // Add some dark text
+        for y in 40..60 {
+            for x in 20..80 {
+                img.put_pixel(x, y, Rgb([30, 25, 20]));
+            }
+        }
+
+        let stats = ColorAnalyzer::calculate_stats_from_image(&img, 1);
+
+        // Paper color should be less than pure white
+        assert!(
+            stats.paper_r < 255.0 || stats.paper_g < 255.0 || stats.paper_b < 255.0,
+            "Yellowed paper should not be pure white"
+        );
+
+        // Blue channel should be lower than red (yellowing)
+        assert!(
+            stats.paper_b < stats.paper_r,
+            "Yellowed paper should have lower blue than red"
+        );
+
+        // After correction, should become more neutral
+        let all_stats = vec![stats];
+        let params = ColorAnalyzer::decide_global_adjustment(&all_stats);
+
+        // Scale should correct the yellowing (blue needs more boost)
+        assert!(
+            params.scale_b >= params.scale_r,
+            "Blue scale {} should be >= red scale {} to correct yellowing",
+            params.scale_b,
+            params.scale_r
+        );
+    }
+
+    // TC-COLOR-003: ゴースト抑制パラメータ計算
+    #[test]
+    fn test_tc_color_003_ghost_suppression_params() {
+        // Create realistic book page: white paper with dark text
+        let mut img = RgbImage::from_pixel(100, 100, Rgb([245, 243, 240])); // Slightly off-white paper
+        // Add dark text
+        for y in 30..40 {
+            for x in 20..80 {
+                img.put_pixel(x, y, Rgb([30, 28, 25])); // Dark ink
+            }
+        }
+        // Add faint ghost/bleed-through (between ink and paper)
+        for y in 60..70 {
+            for x in 20..80 {
+                img.put_pixel(x, y, Rgb([200, 198, 195])); // Ghost - lighter than ink, darker than paper
+            }
+        }
+
+        let stats = ColorAnalyzer::calculate_stats_from_image(&img, 1);
+        let params = ColorAnalyzer::decide_global_adjustment(&[stats]);
+
+        // Ghost suppression threshold should be between ink and paper luminance
+        // Paper luminance ≈ 243, Ink luminance ≈ 28
+        // After scaling, threshold should be around midpoint
+        assert!(
+            params.ghost_suppress_threshold > 0 && params.ghost_suppress_threshold < 255,
+            "Ghost suppression threshold {} should be in valid range",
+            params.ghost_suppress_threshold
+        );
+
+        // Scale should be positive (mapping ink to 0, paper to 255)
+        assert!(
+            params.scale_r > 0.0 && params.scale_g > 0.0 && params.scale_b > 0.0,
+            "Scale factors should be positive: R={}, G={}, B={}",
+            params.scale_r,
+            params.scale_g,
+            params.scale_b
+        );
+
+        // Paper color should be detected
+        assert!(
+            params.paper_r > 200 && params.paper_g > 200 && params.paper_b > 200,
+            "Paper color should be light: R={}, G={}, B={}",
+            params.paper_r,
+            params.paper_g,
+            params.paper_b
+        );
+    }
+
+    // TC-COLOR-004: カラー画像 - 彩度保持
+    #[test]
+    fn test_tc_color_004_color_image_saturation_preserved() {
+        // Create image with colored content
+        let mut img = RgbImage::from_pixel(100, 100, Rgb([255, 255, 255]));
+        // Add red block
+        for y in 20..40 {
+            for x in 20..40 {
+                img.put_pixel(x, y, Rgb([255, 50, 50])); // Red
+            }
+        }
+        // Add blue block
+        for y in 60..80 {
+            for x in 60..80 {
+                img.put_pixel(x, y, Rgb([50, 50, 255])); // Blue
+            }
+        }
+
+        let _original_red = *img.get_pixel(30, 30);
+        let _original_blue = *img.get_pixel(70, 70);
+
+        let stats = ColorAnalyzer::calculate_stats_from_image(&img, 1);
+        let params = ColorAnalyzer::decide_global_adjustment(&[stats]);
+        ColorAnalyzer::apply_adjustment(&mut img, &params);
+
+        // Check that colored pixels still have color (not desaturated to gray)
+        let adjusted_red = img.get_pixel(30, 30);
+        let adjusted_blue = img.get_pixel(70, 70);
+
+        // Red pixel should still be predominantly red
+        assert!(
+            adjusted_red.0[0] > adjusted_red.0[1] && adjusted_red.0[0] > adjusted_red.0[2],
+            "Red pixel should remain red after adjustment"
+        );
+
+        // Blue pixel should still be predominantly blue
+        assert!(
+            adjusted_blue.0[2] > adjusted_blue.0[0] && adjusted_blue.0[2] > adjusted_blue.0[1],
+            "Blue pixel should remain blue after adjustment"
+        );
+    }
+
+    // TC-COLOR-005: 外れ値ページ - MADで除外
+    #[test]
+    fn test_tc_color_005_outlier_exclusion_mad() {
+        // Create stats with one obvious outlier
+        let stats = vec![
+            ColorStats {
+                page_number: 1,
+                paper_r: 250.0,
+                paper_g: 250.0,
+                paper_b: 250.0,
+                ink_r: 10.0,
+                ink_g: 10.0,
+                ink_b: 10.0,
+                ..Default::default()
+            },
+            ColorStats {
+                page_number: 2,
+                paper_r: 248.0,
+                paper_g: 248.0,
+                paper_b: 248.0,
+                ink_r: 12.0,
+                ink_g: 12.0,
+                ink_b: 12.0,
+                ..Default::default()
+            },
+            ColorStats {
+                page_number: 3,
+                paper_r: 252.0,
+                paper_g: 252.0,
+                paper_b: 252.0,
+                ink_r: 8.0,
+                ink_g: 8.0,
+                ink_b: 8.0,
+                ..Default::default()
+            },
+            ColorStats {
+                page_number: 4,
+                paper_r: 50.0, // Extreme outlier - dark page
+                paper_g: 50.0,
+                paper_b: 50.0,
+                ink_r: 10.0,
+                ink_g: 10.0,
+                ink_b: 10.0,
+                ..Default::default()
+            },
+            ColorStats {
+                page_number: 5,
+                paper_r: 249.0,
+                paper_g: 249.0,
+                paper_b: 249.0,
+                ink_r: 11.0,
+                ink_g: 11.0,
+                ink_b: 11.0,
+                ..Default::default()
+            },
+            ColorStats {
+                page_number: 6,
+                paper_r: 251.0,
+                paper_g: 251.0,
+                paper_b: 251.0,
+                ink_r: 9.0,
+                ink_g: 9.0,
+                ink_b: 9.0,
+                ..Default::default()
+            },
+        ];
+
+        let filtered = ColorAnalyzer::exclude_outliers(&stats);
+
+        // The outlier (page 4 with paper_r=50) should be excluded
+        let has_outlier = filtered.iter().any(|s| s.page_number == 4);
+
+        assert!(
+            !has_outlier || filtered.len() < stats.len(),
+            "Outlier page 4 should be excluded by MAD filter"
+        );
+
+        // Remaining pages should have consistent paper color
+        if filtered.len() > 1 {
+            let paper_values: Vec<f64> = filtered.iter().map(|s| s.paper_r).collect();
+            let min = paper_values.iter().cloned().fold(f64::INFINITY, f64::min);
+            let max = paper_values
+                .iter()
+                .cloned()
+                .fold(f64::NEG_INFINITY, f64::max);
+
+            assert!(
+                max - min < 50.0,
+                "Filtered paper values should be consistent (range {} is too large)",
+                max - min
+            );
+        }
+    }
 }

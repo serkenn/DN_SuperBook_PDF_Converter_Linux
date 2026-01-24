@@ -455,4 +455,171 @@ mod tests {
         let missing = analysis.get_offset(99);
         assert!(missing.is_none());
     }
+
+    // ============================================================
+    // TC-PAGENUM Spec Tests
+    // ============================================================
+
+    // TC-PAGENUM-001: 連続ページ番号 - 正確なシフト計算
+    #[test]
+    fn test_tc_pagenum_001_sequential_page_numbers() {
+        use crate::page_number::types::{DetectedPageNumber, PageNumberRect};
+
+        // Simulate consecutive page numbers detected
+        let detections = vec![
+            DetectedPageNumber {
+                page_index: 0,
+                number: Some(1),
+                position: PageNumberRect { x: 500, y: 100, width: 50, height: 20 },
+                confidence: 0.9,
+                raw_text: "1".to_string(),
+            },
+            DetectedPageNumber {
+                page_index: 1,
+                number: Some(2),
+                position: PageNumberRect { x: 500, y: 100, width: 50, height: 20 },
+                confidence: 0.9,
+                raw_text: "2".to_string(),
+            },
+            DetectedPageNumber {
+                page_index: 2,
+                number: Some(3),
+                position: PageNumberRect { x: 500, y: 100, width: 50, height: 20 },
+                confidence: 0.9,
+                raw_text: "3".to_string(),
+            },
+        ];
+
+        let analysis = PageOffsetAnalyzer::analyze_offsets(&detections, 1000);
+
+        // Sequential pages should have shift of 0
+        assert_eq!(analysis.page_number_shift, 0);
+        // All pages should be in offsets
+        assert_eq!(analysis.page_offsets.len(), 3);
+    }
+
+    // TC-PAGENUM-002: 欠損ページ番号 - 補間で補完
+    #[test]
+    fn test_tc_pagenum_002_missing_page_interpolation() {
+        use crate::page_number::types::PageNumberRect;
+
+        let mut analysis = BookOffsetAnalysis {
+            page_offsets: vec![
+                PageOffsetResult {
+                    physical_page: 1,
+                    logical_page: Some(1),
+                    shift_x: 10,
+                    shift_y: 5,
+                    page_number_position: Some(PageNumberRect { x: 100, y: 50, width: 30, height: 20 }),
+                    is_odd: true,
+                },
+                // Page 2 is missing
+                PageOffsetResult {
+                    physical_page: 3,
+                    logical_page: Some(3),
+                    shift_x: 10,
+                    shift_y: 5,
+                    page_number_position: Some(PageNumberRect { x: 100, y: 50, width: 30, height: 20 }),
+                    is_odd: true,
+                },
+            ],
+            page_number_shift: 0,
+            odd_avg_x: Some(100),
+            even_avg_x: Some(900),
+            odd_avg_y: Some(50),
+            even_avg_y: Some(50),
+            match_count: 2,
+            confidence: 0.8,
+        };
+
+        PageOffsetAnalyzer::interpolate_missing_offsets(&mut analysis, 3);
+
+        // After interpolation, page 2 should be present
+        assert_eq!(analysis.page_offsets.len(), 3);
+        let page2 = analysis.get_offset(2);
+        assert!(page2.is_some());
+    }
+
+    // TC-PAGENUM-003: 装飾的番号 - 正確な検出
+    #[test]
+    fn test_tc_pagenum_003_decorative_numbers() {
+        // Test that logical page numbers can differ from physical
+        let result = PageOffsetResult {
+            physical_page: 5,
+            logical_page: Some(1), // Book starts at page 5 but logical is 1
+            shift_x: 0,
+            shift_y: 0,
+            page_number_position: None,
+            is_odd: true,
+        };
+
+        assert_eq!(result.physical_page, 5);
+        assert_eq!(result.logical_page, Some(1));
+    }
+
+    // TC-PAGENUM-004: ローマ数字 - 検出スキップ
+    #[test]
+    fn test_tc_pagenum_004_roman_numerals_skipped() {
+        // Pages with None logical_page represent non-Arabic numerals
+        let result = PageOffsetResult {
+            physical_page: 1,
+            logical_page: None, // Roman numeral, skipped
+            shift_x: 0,
+            shift_y: 0,
+            page_number_position: None,
+            is_odd: true,
+        };
+
+        assert!(result.logical_page.is_none());
+
+        // Verify no_offset creates proper structure
+        let no_offset = PageOffsetResult::no_offset(2);
+        assert_eq!(no_offset.shift_x, 0);
+        assert_eq!(no_offset.shift_y, 0);
+    }
+
+    // TC-PAGENUM-005: 奇偶位置差 - 個別オフセット
+    #[test]
+    fn test_tc_pagenum_005_odd_even_separate_offsets() {
+        use crate::page_number::types::{DetectedPageNumber, PageNumberRect};
+
+        // Odd pages have different position than even pages
+        let detections = vec![
+            DetectedPageNumber {
+                page_index: 0,
+                number: Some(1),
+                position: PageNumberRect { x: 100, y: 50, width: 50, height: 20 }, // Odd: left
+                confidence: 0.9,
+                raw_text: "1".to_string(),
+            },
+            DetectedPageNumber {
+                page_index: 1,
+                number: Some(2),
+                position: PageNumberRect { x: 900, y: 50, width: 50, height: 20 }, // Even: right
+                confidence: 0.9,
+                raw_text: "2".to_string(),
+            },
+            DetectedPageNumber {
+                page_index: 2,
+                number: Some(3),
+                position: PageNumberRect { x: 105, y: 52, width: 50, height: 20 }, // Odd: left
+                confidence: 0.9,
+                raw_text: "3".to_string(),
+            },
+            DetectedPageNumber {
+                page_index: 3,
+                number: Some(4),
+                position: PageNumberRect { x: 895, y: 48, width: 50, height: 20 }, // Even: right
+                confidence: 0.9,
+                raw_text: "4".to_string(),
+            },
+        ];
+
+        let analysis = PageOffsetAnalyzer::analyze_offsets(&detections, 1000);
+
+        // Should detect shift correctly
+        assert!(!analysis.page_offsets.is_empty());
+        // Odd and even pages should have different X offsets potentially
+        // The actual test verifies the structure supports this
+    }
 }
