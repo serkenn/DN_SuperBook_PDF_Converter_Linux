@@ -182,6 +182,10 @@ pub struct ConvertArgs {
     /// Enable advanced processing (combines internal-resolution, color-correction, offset-alignment)
     #[arg(long)]
     pub advanced: bool,
+
+    /// Skip files if output already exists
+    #[arg(long)]
+    pub skip_existing: bool,
 }
 
 impl ConvertArgs {
@@ -1713,6 +1717,44 @@ mod tests {
             assert!(!args.effective_internal_resolution());
             assert!(!args.effective_color_correction());
             assert!(!args.effective_offset_alignment());
+        }
+    }
+
+    // ============ Skip Existing Option Tests ============
+
+    #[test]
+    fn test_skip_existing_default() {
+        let cli = Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf"]).unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert!(!args.skip_existing);
+        }
+    }
+
+    #[test]
+    fn test_skip_existing_enabled() {
+        let cli =
+            Cli::try_parse_from(["superbook-pdf", "convert", "input.pdf", "--skip-existing"])
+                .unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert!(args.skip_existing);
+        }
+    }
+
+    #[test]
+    fn test_skip_existing_with_other_options() {
+        let cli = Cli::try_parse_from([
+            "superbook-pdf",
+            "convert",
+            "input.pdf",
+            "--skip-existing",
+            "--advanced",
+            "-v",
+        ])
+        .unwrap();
+        if let Commands::Convert(args) = cli.command {
+            assert!(args.skip_existing);
+            assert!(args.advanced);
+            assert_eq!(args.verbose, 1);
         }
     }
 }

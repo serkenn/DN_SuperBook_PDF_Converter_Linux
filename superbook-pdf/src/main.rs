@@ -90,10 +90,28 @@ fn run_convert(args: &ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     // Track processing results
     let mut ok_count = 0usize;
+    let mut skip_count = 0usize;
     let mut error_count = 0usize;
 
     // Process each PDF file
     for (idx, pdf_path) in pdf_files.iter().enumerate() {
+        // Check if output already exists (--skip-existing)
+        if args.skip_existing {
+            let output_pdf = get_output_pdf_path(pdf_path, &args.output);
+            if output_pdf.exists() {
+                if verbose {
+                    println!(
+                        "[{}/{}] Skipping (exists): {}",
+                        idx + 1,
+                        pdf_files.len(),
+                        pdf_path.display()
+                    );
+                }
+                skip_count += 1;
+                continue;
+            }
+        }
+
         if verbose {
             println!(
                 "[{}/{}] Processing: {}",
@@ -117,7 +135,7 @@ fn run_convert(args: &ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     // Print summary
     if !args.quiet {
-        ProgressTracker::print_summary(pdf_files.len(), ok_count, 0, error_count);
+        ProgressTracker::print_summary(pdf_files.len(), ok_count, skip_count, error_count);
         println!("Total time: {:.2}s", elapsed.as_secs_f64());
     }
 
@@ -127,6 +145,12 @@ fn run_convert(args: &ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// Get the output PDF path for a given input PDF
+fn get_output_pdf_path(pdf_path: &PathBuf, output_dir: &PathBuf) -> PathBuf {
+    let pdf_name = pdf_path.file_stem().unwrap_or_default().to_string_lossy();
+    output_dir.join(format!("{}_converted.pdf", pdf_name))
 }
 
 /// Collect PDF files from input path (file or directory)
