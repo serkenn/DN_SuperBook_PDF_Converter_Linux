@@ -2,13 +2,54 @@
 //!
 //! Provides a clean API for PDF processing pipeline, separating
 //! business logic from CLI handling.
+//!
+//! ## Processing Steps
+//!
+//! 1. PDF読み込み・メタデータ抽出
+//! 2. 画像抽出 (pdftoppm/ImageMagick)
+//! 3. 傾き補正 (Deskew)
+//! 4. マージントリミング
+//! 5. AI超解像 (RealESRGAN)
+//! 6. 内部解像度正規化
+//! 7. 色統計分析・グローバル色補正
+//! 8. Tukey fenceグループクロップ
+//! 9. ページ番号オフセット計算
+//! 10. 最終出力リサイズ
+//! 11. 縦書き検出
+//! 12. YomiToku OCR
+//! 13. PDF生成
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 use thiserror::Error;
 
 use crate::cli::ConvertArgs;
+
+/// Progress callback for pipeline steps
+pub trait ProgressCallback: Send + Sync {
+    /// Called when a new step starts
+    fn on_step_start(&self, step: &str);
+    /// Called to report progress within a step
+    fn on_step_progress(&self, current: usize, total: usize);
+    /// Called when a step completes
+    fn on_step_complete(&self, step: &str, message: &str);
+    /// Called for debug/verbose messages
+    fn on_debug(&self, message: &str);
+}
+
+/// No-op progress callback (silent mode)
+pub struct SilentProgress;
+
+impl ProgressCallback for SilentProgress {
+    fn on_step_start(&self, _step: &str) {}
+    fn on_step_progress(&self, _current: usize, _total: usize) {}
+    fn on_step_complete(&self, _step: &str, _message: &str) {}
+    fn on_debug(&self, _message: &str) {}
+}
 
 /// Pipeline processing error
 #[derive(Error, Debug)]
@@ -213,6 +254,21 @@ impl PipelineResult {
     }
 }
 
+/// Processing context for intermediate data
+#[derive(Debug)]
+pub struct ProcessingContext {
+    /// Working directory for this PDF
+    pub work_dir: PathBuf,
+    /// PDF document info
+    pub pdf_info: crate::PdfDocument,
+    /// Extracted page images
+    pub current_images: Vec<PathBuf>,
+    /// Detected vertical writing
+    pub is_vertical: bool,
+    /// Page number shift
+    pub page_number_shift: Option<i32>,
+}
+
 /// PDF processing pipeline
 pub struct PdfPipeline {
     config: PipelineConfig,
@@ -235,12 +291,26 @@ impl PdfPipeline {
         output_dir.join(format!("{}_converted.pdf", pdf_name))
     }
 
-    /// Process a single PDF file
+    /// Get the working directory for a PDF
+    pub fn get_work_dir(&self, input: &Path, output_dir: &Path) -> PathBuf {
+        let pdf_name = input.file_stem().unwrap_or_default().to_string_lossy();
+        output_dir.join(format!(".work_{}", pdf_name))
+    }
+
+    /// Process a single PDF file (silent mode)
+    pub fn process(&self, input: &Path, output_dir: &Path) -> Result<PipelineResult, PipelineError> {
+        self.process_with_progress(input, output_dir, &SilentProgress)
+    }
+
+    /// Process a single PDF file with progress callback
     ///
     /// This is the main entry point for PDF processing.
-    /// Currently delegates to the existing main.rs implementation.
-    /// Future: Full pipeline implementation.
-    pub fn process(&self, input: &Path, output_dir: &Path) -> Result<PipelineResult, PipelineError> {
+    pub fn process_with_progress<P: ProgressCallback>(
+        &self,
+        input: &Path,
+        output_dir: &Path,
+        progress: &P,
+    ) -> Result<PipelineResult, PipelineError> {
         let start_time = Instant::now();
 
         // Validate input
@@ -252,24 +322,606 @@ impl PdfPipeline {
         std::fs::create_dir_all(output_dir)?;
 
         let output_path = self.get_output_path(input, output_dir);
+        let work_dir = self.get_work_dir(input, output_dir);
+        std::fs::create_dir_all(&work_dir)?;
 
-        // Read PDF to get page count
+        // Step 1: Read PDF metadata
+        progress.on_step_start("Reading PDF...");
         let reader = crate::LopdfReader::new(input)
             .map_err(|e| PipelineError::ExtractionFailed(e.to_string()))?;
-        let page_count = reader.info.page_count;
+        let total_pages = reader.info.page_count;
+        progress.on_step_complete("Reading PDF", &format!("{} pages", total_pages));
 
-        // For now, return a placeholder result
-        // Full processing will be implemented incrementally
+        // Step 2: Extract images
+        progress.on_step_start(&format!("Extracting images (DPI: {})...", self.config.dpi));
+        let extract_options = crate::ExtractOptions::builder()
+            .dpi(self.config.dpi)
+            .build();
+        let extracted_dir = work_dir.join("extracted");
+        std::fs::create_dir_all(&extracted_dir)?;
+
+        let mut extracted_pages = crate::LopdfExtractor::extract_auto(input, &extracted_dir, &extract_options)
+            .map_err(|e| PipelineError::ExtractionFailed(e.to_string()))?;
+
+        // Apply max_pages limit
+        if let Some(max_pages) = self.config.max_pages {
+            if extracted_pages.len() > max_pages {
+                progress.on_debug(&format!("Limiting to {} pages (--max-pages)", max_pages));
+                extracted_pages.truncate(max_pages);
+            }
+        }
+        let page_count = extracted_pages.len();
+        progress.on_step_complete("Extracting images", &format!("{} pages", page_count));
+
+        // Convert to PathBuf list
+        let mut current_images: Vec<PathBuf> = extracted_pages.iter().map(|p| p.path.clone()).collect();
+
+        // Step 3: Deskew (if enabled)
+        if self.config.deskew {
+            current_images = self.step_deskew(&work_dir, &current_images, progress)?;
+        }
+
+        // Step 4: Margin Trimming
+        // Note: margin_trim is a percentage, skip if 0
+        if self.config.margin_trim > 0.0 {
+            current_images = self.step_margin_trim(&work_dir, &current_images, progress)?;
+        }
+
+        // Step 5: AI Upscaling (if enabled)
+        if self.config.upscale {
+            current_images = self.step_upscale(&work_dir, &current_images, progress)?;
+        }
+
+        // Step 6: Internal Resolution Normalization (if enabled)
+        if self.config.internal_resolution {
+            current_images = self.step_normalize(&work_dir, &current_images, progress)?;
+        }
+
+        // Step 7: Color Correction (if enabled)
+        if self.config.color_correction {
+            current_images = self.step_color_correction(&work_dir, &current_images, progress)?;
+        }
+
+        // Step 8: Tukey Fence Group Crop (if offset_alignment enabled)
+        if self.config.offset_alignment {
+            current_images = self.step_group_crop(&work_dir, &current_images, progress)?;
+        }
+
+        // Step 9: Page Number Offset Calculation
+        let page_number_shift = if self.config.offset_alignment {
+            self.step_page_number_detection(&current_images, progress)?
+        } else {
+            None
+        };
+
+        // Step 10: Final Output (resize)
+        if self.config.output_height != 0 && self.config.output_height != 7016 {
+            current_images = self.step_finalize(&work_dir, &current_images, progress)?;
+        }
+
+        // Step 11: Vertical Text Detection
+        let is_vertical = self.step_vertical_detection(&current_images, progress)?;
+
+        // Step 12: OCR with YomiToku (if enabled)
+        let ocr_results = if self.config.ocr {
+            self.step_ocr(&current_images, progress)?
+        } else {
+            vec![]
+        };
+
+        // Step 13: Generate PDF
+        progress.on_step_start("Generating output PDF...");
+        self.step_generate_pdf(&current_images, &output_path, &reader.info, &ocr_results, progress)?;
+
+        // Get output file size
+        let output_size = std::fs::metadata(&output_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        progress.on_step_complete("Generating PDF", &format!("{} bytes", output_size));
+
+        // Cleanup work directory (unless save_debug)
+        if !self.config.save_debug {
+            std::fs::remove_dir_all(&work_dir).ok();
+        }
+
         let elapsed = start_time.elapsed().as_secs_f64();
 
         Ok(PipelineResult::new(
             page_count,
-            None,  // page_number_shift
-            false, // is_vertical
+            page_number_shift,
+            is_vertical,
             elapsed,
             output_path,
-            0, // output_size (not generated yet)
+            output_size,
         ))
+    }
+
+    // ============ Processing Step Implementations ============
+
+    /// Step 3: Deskew correction
+    fn step_deskew<P: ProgressCallback>(
+        &self,
+        work_dir: &Path,
+        images: &[PathBuf],
+        progress: &P,
+    ) -> Result<Vec<PathBuf>, PipelineError> {
+        progress.on_step_start("Applying deskew correction...");
+        let deskewed_dir = work_dir.join("deskewed");
+        std::fs::create_dir_all(&deskewed_dir)?;
+
+        let deskew_options = crate::DeskewOptions::default();
+        let output_paths: Vec<PathBuf> = images
+            .iter()
+            .map(|img| deskewed_dir.join(img.file_name().unwrap()))
+            .collect();
+
+        let results: Vec<PathBuf> = images
+            .par_iter()
+            .zip(output_paths.par_iter())
+            .map(|(img_path, output_path)| {
+                match crate::ImageProcDeskewer::correct_skew(img_path, output_path, &deskew_options) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        std::fs::copy(img_path, output_path).ok();
+                    }
+                }
+                output_path.clone()
+            })
+            .collect();
+
+        progress.on_step_complete("Deskew", &format!("{} images", results.len()));
+        Ok(results)
+    }
+
+    /// Step 4: Margin trimming
+    fn step_margin_trim<P: ProgressCallback>(
+        &self,
+        work_dir: &Path,
+        images: &[PathBuf],
+        progress: &P,
+    ) -> Result<Vec<PathBuf>, PipelineError> {
+        progress.on_step_start(&format!("Trimming margins ({}%)...", self.config.margin_trim));
+        let trimmed_dir = work_dir.join("trimmed");
+        std::fs::create_dir_all(&trimmed_dir)?;
+
+        let margin_options = crate::MarginOptions::builder()
+            .default_trim_percent(self.config.margin_trim as f32)
+            .build();
+
+        // Detect unified margins
+        let unified = match crate::ImageMarginDetector::detect_unified(images, &margin_options) {
+            Ok(u) => u,
+            Err(_) => {
+                progress.on_debug("Margin detection failed, skipping trim");
+                return Ok(images.to_vec());
+            }
+        };
+
+        let output_paths: Vec<PathBuf> = images
+            .iter()
+            .map(|img| trimmed_dir.join(img.file_name().unwrap()))
+            .collect();
+
+        let results: Vec<PathBuf> = images
+            .par_iter()
+            .zip(output_paths.par_iter())
+            .map(|(img_path, output_path)| {
+                match crate::ImageMarginDetector::trim(img_path, output_path, &unified.margins) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        std::fs::copy(img_path, output_path).ok();
+                    }
+                }
+                output_path.clone()
+            })
+            .collect();
+
+        progress.on_step_complete("Margin trim", &format!("{} images", results.len()));
+        Ok(results)
+    }
+
+    /// Step 5: AI Upscaling
+    fn step_upscale<P: ProgressCallback>(
+        &self,
+        work_dir: &Path,
+        images: &[PathBuf],
+        progress: &P,
+    ) -> Result<Vec<PathBuf>, PipelineError> {
+        progress.on_step_start("AI Upscaling (RealESRGAN)...");
+        let upscaled_dir = work_dir.join("upscaled");
+        std::fs::create_dir_all(&upscaled_dir)?;
+
+        // Try to initialize RealESRGAN
+        let venv_path = std::env::var("SUPERBOOK_VENV")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("./venv"));
+
+        let bridge_config = crate::AiBridgeConfig::builder()
+            .venv_path(venv_path)
+            .build();
+
+        let bridge = match crate::SubprocessBridge::new(bridge_config) {
+            Ok(b) => b,
+            Err(e) => {
+                progress.on_debug(&format!("RealESRGAN not available: {}", e));
+                return Ok(images.to_vec());
+            }
+        };
+
+        let esrgan = crate::RealEsrgan::new(bridge);
+        let mut options = crate::RealEsrganOptions::builder().scale(2);
+        if self.config.gpu {
+            options = options.gpu_id(0);
+        }
+        let options = options.build();
+
+        match esrgan.upscale_batch(images, &upscaled_dir, &options, None) {
+            Ok(result) => {
+                progress.on_step_complete("Upscaling", &format!("{} images", result.successful.len()));
+                Ok(result.successful.iter().map(|r| r.output_path.clone()).collect())
+            }
+            Err(e) => {
+                progress.on_debug(&format!("Upscaling failed: {}", e));
+                Ok(images.to_vec())
+            }
+        }
+    }
+
+    /// Step 6: Internal resolution normalization
+    fn step_normalize<P: ProgressCallback>(
+        &self,
+        work_dir: &Path,
+        images: &[PathBuf],
+        progress: &P,
+    ) -> Result<Vec<PathBuf>, PipelineError> {
+        progress.on_step_start("Normalizing to internal resolution (4960x7016)...");
+        let normalized_dir = work_dir.join("normalized");
+        std::fs::create_dir_all(&normalized_dir)?;
+
+        let normalize_options = crate::NormalizeOptions::builder()
+            .target_width(4960)
+            .target_height(7016)
+            .build();
+
+        let output_paths: Vec<PathBuf> = (0..images.len())
+            .map(|i| normalized_dir.join(format!("page_{:04}.png", i)))
+            .collect();
+
+        let completed = Arc::new(AtomicUsize::new(0));
+        let _total = images.len();
+
+        let results: Vec<PathBuf> = images
+            .par_iter()
+            .zip(output_paths.par_iter())
+            .map(|(img_path, output_path)| {
+                match crate::ImageNormalizer::normalize(img_path, output_path, &normalize_options) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        std::fs::copy(img_path, output_path).ok();
+                    }
+                }
+                completed.fetch_add(1, Ordering::Relaxed);
+                output_path.clone()
+            })
+            .collect();
+
+        progress.on_step_complete("Normalization", &format!("{} images", results.len()));
+        Ok(results)
+    }
+
+    /// Step 7: Color correction
+    fn step_color_correction<P: ProgressCallback>(
+        &self,
+        work_dir: &Path,
+        images: &[PathBuf],
+        progress: &P,
+    ) -> Result<Vec<PathBuf>, PipelineError> {
+        progress.on_step_start("Analyzing color statistics...");
+        let color_corrected_dir = work_dir.join("color_corrected");
+        std::fs::create_dir_all(&color_corrected_dir)?;
+
+        // Collect color statistics
+        let stats_results: Vec<_> = images
+            .par_iter()
+            .map(|img_path| crate::ColorAnalyzer::calculate_stats(img_path))
+            .collect();
+
+        let all_stats: Vec<_> = stats_results
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if all_stats.is_empty() {
+            progress.on_debug("Color analysis failed, skipping correction");
+            return Ok(images.to_vec());
+        }
+
+        let global_param = crate::ColorAnalyzer::decide_global_adjustment(&all_stats);
+
+        let output_paths: Vec<PathBuf> = (0..images.len())
+            .map(|i| color_corrected_dir.join(format!("page_{:04}.png", i)))
+            .collect();
+
+        let results: Vec<PathBuf> = images
+            .par_iter()
+            .zip(output_paths.par_iter())
+            .map(|(img_path, output_path)| {
+                if let Ok(img) = image::open(img_path) {
+                    let mut rgb_img = img.to_rgb8();
+                    crate::ColorAnalyzer::apply_adjustment(&mut rgb_img, &global_param);
+                    rgb_img.save(output_path).ok();
+                } else {
+                    std::fs::copy(img_path, output_path).ok();
+                }
+                output_path.clone()
+            })
+            .collect();
+
+        progress.on_step_complete("Color correction", &format!("{} images", results.len()));
+        Ok(results)
+    }
+
+    /// Step 8: Tukey fence group crop
+    fn step_group_crop<P: ProgressCallback>(
+        &self,
+        work_dir: &Path,
+        images: &[PathBuf],
+        progress: &P,
+    ) -> Result<Vec<PathBuf>, PipelineError> {
+        progress.on_step_start("Detecting text bounding boxes...");
+        let cropped_dir = work_dir.join("cropped");
+        std::fs::create_dir_all(&cropped_dir)?;
+
+        let bounding_boxes = crate::GroupCropAnalyzer::detect_all_bounding_boxes(images, 240);
+
+        if bounding_boxes.is_empty() {
+            progress.on_debug("No bounding boxes detected, skipping crop");
+            return Ok(images.to_vec());
+        }
+
+        let unified = crate::GroupCropAnalyzer::unify_and_expand_regions(
+            &bounding_boxes,
+            5,    // 5% margin expansion
+            4960, // internal width limit
+            7016, // internal height limit
+        );
+
+        let output_paths: Vec<PathBuf> = (0..images.len())
+            .map(|i| cropped_dir.join(format!("page_{:04}.png", i)))
+            .collect();
+
+        let results: Vec<PathBuf> = images
+            .par_iter()
+            .zip(output_paths.par_iter())
+            .enumerate()
+            .map(|(i, (img_path, output_path))| {
+                let region = if i % 2 == 0 { &unified.odd_region } else { &unified.even_region };
+
+                if let Ok(img) = image::open(img_path) {
+                    let cropped = img.crop_imm(
+                        region.left,
+                        region.top,
+                        region.width.min(img.width() - region.left),
+                        region.height.min(img.height() - region.top),
+                    );
+                    cropped.save(output_path).ok();
+                } else {
+                    std::fs::copy(img_path, output_path).ok();
+                }
+                output_path.clone()
+            })
+            .collect();
+
+        progress.on_step_complete("Group crop", &format!("{} images", results.len()));
+        Ok(results)
+    }
+
+    /// Step 9: Page number detection
+    fn step_page_number_detection<P: ProgressCallback>(
+        &self,
+        images: &[PathBuf],
+        progress: &P,
+    ) -> Result<Option<i32>, PipelineError> {
+        progress.on_step_start("Detecting page numbers...");
+
+        let page_options = crate::PageNumberOptions::default();
+        let mut page_detections = Vec::new();
+
+        for (i, img_path) in images.iter().enumerate() {
+            if let Ok(detection) = crate::TesseractPageDetector::detect_single(img_path, i, &page_options) {
+                page_detections.push(detection);
+            }
+        }
+
+        if page_detections.is_empty() {
+            progress.on_step_complete("Page number detection", "no pages detected");
+            return Ok(None);
+        }
+
+        let first_img = image::open(&images[0]).ok();
+        let img_height = first_img.as_ref().map(|img| img.height()).unwrap_or(7016);
+
+        let analysis = crate::PageOffsetAnalyzer::analyze_offsets(&page_detections, img_height);
+        progress.on_step_complete("Page number detection", &format!("shift: {}", analysis.page_number_shift));
+
+        Ok(Some(analysis.page_number_shift))
+    }
+
+    /// Step 10: Finalize output
+    fn step_finalize<P: ProgressCallback>(
+        &self,
+        work_dir: &Path,
+        images: &[PathBuf],
+        progress: &P,
+    ) -> Result<Vec<PathBuf>, PipelineError> {
+        progress.on_step_start(&format!("Finalizing output (height: {})...", self.config.output_height));
+        let finalized_dir = work_dir.join("finalized");
+        std::fs::create_dir_all(&finalized_dir)?;
+
+        let finalize_options = crate::FinalizeOptions::builder()
+            .target_height(self.config.output_height)
+            .build();
+
+        let output_paths: Vec<PathBuf> = (0..images.len())
+            .map(|i| finalized_dir.join(format!("page_{:04}.png", i)))
+            .collect();
+
+        let results: Vec<PathBuf> = images
+            .par_iter()
+            .zip(output_paths.par_iter())
+            .map(|(img_path, output_path)| {
+                match crate::PageFinalizer::finalize(img_path, output_path, &finalize_options, None, 0, 0) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        std::fs::copy(img_path, output_path).ok();
+                    }
+                }
+                output_path.clone()
+            })
+            .collect();
+
+        progress.on_step_complete("Finalize", &format!("{} images", results.len()));
+        Ok(results)
+    }
+
+    /// Step 11: Vertical text detection
+    fn step_vertical_detection<P: ProgressCallback>(
+        &self,
+        images: &[PathBuf],
+        progress: &P,
+    ) -> Result<bool, PipelineError> {
+        if images.is_empty() {
+            return Ok(false);
+        }
+
+        progress.on_step_start("Detecting text direction...");
+
+        let mut gray_images = Vec::new();
+        for img_path in images.iter().take(20) {
+            if let Ok(img) = image::open(img_path) {
+                gray_images.push(img.to_luma8());
+            }
+        }
+
+        if gray_images.is_empty() {
+            progress.on_step_complete("Vertical detection", "no images to analyze");
+            return Ok(false);
+        }
+
+        let vd_options = crate::VerticalDetectOptions::default();
+        match crate::detect_book_vertical_writing(&gray_images, &vd_options) {
+            Ok(result) => {
+                let direction = if result.is_vertical { "vertical" } else { "horizontal" };
+                progress.on_step_complete("Vertical detection", direction);
+                Ok(result.is_vertical)
+            }
+            Err(_) => {
+                progress.on_step_complete("Vertical detection", "failed");
+                Ok(false)
+            }
+        }
+    }
+
+    /// Step 12: OCR with YomiToku
+    fn step_ocr<P: ProgressCallback>(
+        &self,
+        images: &[PathBuf],
+        progress: &P,
+    ) -> Result<Vec<Option<crate::OcrResult>>, PipelineError> {
+        progress.on_step_start("Running OCR (YomiToku)...");
+
+        let venv_path = std::env::var("SUPERBOOK_VENV")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("./venv"));
+
+        let bridge_config = crate::AiBridgeConfig::builder()
+            .venv_path(venv_path)
+            .build();
+
+        let bridge = match crate::SubprocessBridge::new(bridge_config) {
+            Ok(b) => b,
+            Err(e) => {
+                progress.on_debug(&format!("YomiToku not available: {}", e));
+                return Ok(vec![]);
+            }
+        };
+
+        let yomitoku = crate::YomiToku::new(bridge);
+        let mut ocr_opts = crate::YomiTokuOptions::builder();
+        if self.config.gpu {
+            ocr_opts = ocr_opts.use_gpu(true).gpu_id(0);
+        }
+        let ocr_opts = ocr_opts.build();
+
+        let mut results = Vec::new();
+        for img_path in images {
+            match yomitoku.ocr(img_path, &ocr_opts) {
+                Ok(result) => results.push(Some(result)),
+                Err(_) => results.push(None),
+            }
+        }
+
+        let success_count = results.iter().filter(|r| r.is_some()).count();
+        progress.on_step_complete("OCR", &format!("{}/{} pages", success_count, results.len()));
+        Ok(results)
+    }
+
+    /// Step 13: Generate PDF
+    fn step_generate_pdf<P: ProgressCallback>(
+        &self,
+        images: &[PathBuf],
+        output_path: &Path,
+        pdf_info: &crate::PdfDocument,
+        ocr_results: &[Option<crate::OcrResult>],
+        _progress: &P,
+    ) -> Result<(), PipelineError> {
+        use crate::pdf_writer::{OcrLayer, OcrPageText, TextBlock};
+
+        // Convert OCR results to OcrLayer
+        let ocr_layer = if !ocr_results.is_empty() {
+            let pages: Vec<OcrPageText> = ocr_results
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, result): (usize, &Option<crate::OcrResult>)| {
+                    result.as_ref().map(|r| OcrPageText {
+                        page_index: idx,
+                        blocks: r
+                            .text_blocks
+                            .iter()
+                            .map(|b| TextBlock {
+                                x: b.bbox.0 as f64,
+                                y: b.bbox.1 as f64,
+                                width: (b.bbox.2 - b.bbox.0) as f64,
+                                height: (b.bbox.3 - b.bbox.1) as f64,
+                                text: b.text.clone(),
+                                font_size: b.font_size.unwrap_or(12.0) as f64,
+                                vertical: matches!(b.direction, crate::TextDirection::Vertical),
+                            })
+                            .collect(),
+                    })
+                })
+                .collect();
+
+            if pages.is_empty() { None } else { Some(OcrLayer { pages }) }
+        } else {
+            None
+        };
+
+        let mut pdf_builder = crate::PdfWriterOptions::builder()
+            .dpi(self.config.dpi)
+            .jpeg_quality(self.config.jpeg_quality)
+            .metadata(pdf_info.metadata.clone());
+
+        if let Some(layer) = ocr_layer {
+            pdf_builder = pdf_builder.ocr_layer(layer);
+        }
+
+        let pdf_options = pdf_builder.build();
+
+        crate::PrintPdfWriter::create_from_images(images, output_path, &pdf_options)
+            .map_err(|e| PipelineError::PdfGenerationFailed(e.to_string()))?;
+
+        Ok(())
     }
 }
 
