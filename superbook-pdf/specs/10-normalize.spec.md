@@ -61,7 +61,7 @@ bot_left_color ←──────→ bot_right_color
 | target_width | 4960 | 目標幅 (pixels) |
 | target_height | 7016 | 目標高さ (pixels) |
 | resampler | Lanczos3 | リサンプリングアルゴリズム |
-| padding_mode | GradientFill | 余白塗りつぶしモード |
+| padding_mode | Gradient | 余白塗りつぶしモード |
 
 ## リサンプラーオプション
 
@@ -73,7 +73,7 @@ bot_left_color ←──────→ bot_right_color
 ## パディングモード
 
 - `SolidColor`: 単色塗りつぶし
-- `GradientFill`: グラデーション塗りつぶし (推奨)
+- `Gradient`: グラデーション塗りつぶし (推奨)
 - `Mirror`: ミラー反射
 
 ## API
@@ -84,7 +84,7 @@ let options = NormalizeOptions::builder()
     .target_width(4960)
     .target_height(7016)
     .resampler(Resampler::Lanczos3)
-    .padding_mode(PaddingMode::GradientFill)
+    .padding_mode(PaddingMode::Gradient)
     .build();
 
 // 正規化実行
