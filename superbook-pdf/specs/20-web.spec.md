@@ -237,7 +237,7 @@ Options:
 | CLIコマンド | 🟢 | 完了 (serve サブコマンド) |
 | バックグラウンド処理 | 🟢 | 完了 (WorkerPool + JobWorker) |
 | パイプライン統合 | 🟢 | 完了 (PdfPipeline + WebProgressCallback) |
-| WebUI | 🔴 | 未着手 |
+| WebUI | 🟢 | 完了 (rust-embed + ドラッグ&ドロップ) |
 | 統合テスト | 🔴 | 未着手 |
 
 ## 依存クレート

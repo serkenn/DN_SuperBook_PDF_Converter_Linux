@@ -4,11 +4,12 @@
 
 use axum::{
     extract::{Multipart, Path, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     response::{IntoResponse, Json},
     routing::{delete, get, post},
     Router,
 };
+use rust_embed::RustEmbed;
 use serde::Serialize;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -17,6 +18,11 @@ use super::job::{ConvertOptions, Job, JobQueue};
 use super::worker::WorkerPool;
 
 use std::path::PathBuf;
+
+/// Embedded static files
+#[derive(RustEmbed)]
+#[folder = "src/web/static"]
+struct Assets;
 
 /// Application state shared across handlers
 pub struct AppState {
@@ -51,6 +57,27 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         .route("/jobs/{id}", delete(cancel_job))
         .route("/jobs/{id}/download", get(download_result))
         .route("/health", get(health_check))
+}
+
+/// Build the web UI router
+pub fn web_routes() -> Router<Arc<AppState>> {
+    Router::new().route("/", get(index_page))
+}
+
+/// Serve the index page
+async fn index_page() -> impl IntoResponse {
+    match Assets::get("index.html") {
+        Some(content) => {
+            let body = content.data.into_owned();
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                body,
+            )
+                .into_response()
+        }
+        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
+    }
 }
 
 /// Health check response
