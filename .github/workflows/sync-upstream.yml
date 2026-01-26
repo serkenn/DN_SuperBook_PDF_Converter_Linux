@@ -1,0 +1,32 @@
+name: Sync with Upstream
+
+permissions:
+  contents: write
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # 毎日 午前0時(UTC) にチェック
+  workflow_dispatch: # 手動でボタンを押して実行することも可能
+
+jobs:
+  sync_with_upstream:
+    runs-on: ubuntu-latest
+    name: Sync upstream
+    
+    steps:
+    - name: Checkout target repo
+      uses: actions/checkout@v4
+
+    - name: Sync upstream changes
+      id: sync
+      uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+      with:
+        # ↓↓↓ ここを親リポジトリ（フォーク元）の名前に書き換えてください ↓↓↓
+        upstream_sync_repo: clearclown/Rust_DN_SuperBook_PDF_Converter
+        # 親リポジトリのブランチ名（main か master か確認してください）
+        upstream_sync_branch: master
+        # 自分のリポジトリのブランチ名
+        target_sync_branch: master
+        # マージに必要なトークン（下の「重要な設定」を参照）
+        target_repo_token: ${{ secrets.PAT_TOKEN }}
+        test_mode: false
