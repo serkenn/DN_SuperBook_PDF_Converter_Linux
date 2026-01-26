@@ -24,7 +24,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./superbook-pdf/Containerfile
           push: true
           # タグの指定: ユーザー名はSecretsから自動で入ります
           tags: ${{ secrets.DOCKER_USERNAME }}/superbook-pdf:latest
