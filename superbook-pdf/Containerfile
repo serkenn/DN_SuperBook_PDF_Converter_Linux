@@ -2,7 +2,7 @@
 # Multi-stage build for minimal image size
 
 # ===== Stage 1: Build Rust binary =====
-FROM docker.io/rust:1.75-bookworm AS builder
+FROM docker.io/rust:latest AS builder
 
 # Install dependencies for building
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,10 +20,9 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release --features web || true
 RUN rm -rf src
 
-# Copy actual source
+# Copy actual source and benches
 COPY src ./src
-COPY benches ./benches 2>/dev/null || true
-COPY tests ./tests 2>/dev/null || true
+COPY benches ./benches
 
 # Build release binary
 RUN touch src/main.rs && cargo build --release --features web
