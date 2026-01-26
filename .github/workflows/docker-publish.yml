@@ -20,11 +20,14 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       # 3. ビルドとプッシュ
-      # Podmanユーザーでも、GitHub Actions上では標準のDockerツールを使うのが一番安定します
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./superbook-pdf/Containerfile
+          # ソースコードがあるディレクトリ（作業場所）を指定
+          context: ./DN_SuperBook_PDF_Converter_Linux/superbook-pdf
+          
+          # Containerfileの正確なパスを指定
+          file: ./DN_SuperBook_PDF_Converter_Linux/superbook-pdf/Containerfile
+          
           push: true
-          # タグの指定: ユーザー名はSecretsから自動で入ります
           tags: ${{ secrets.DOCKER_USERNAME }}/superbook-pdf:latest
