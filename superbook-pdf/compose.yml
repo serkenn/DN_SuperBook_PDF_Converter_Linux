@@ -40,7 +40,7 @@ services:
       - SUPERBOOK_BIND=0.0.0.0
       - SUPERBOOK_PORT=8080
       - SUPERBOOK_WORK_DIR=/data/work
-      - RUST_LOG=info
+      - RUST_LOG=info,superbook_pdf=info
 
     volumes:
       # Input/Output directories

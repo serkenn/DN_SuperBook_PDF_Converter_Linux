@@ -11,6 +11,7 @@ use uuid::Uuid;
 use super::job::{ConvertOptions, JobQueue, JobStatus, Progress};
 use super::websocket::WsBroadcaster;
 use crate::pipeline::{PdfPipeline, PipelineConfig, ProgressCallback};
+use tracing::{info, error, warn};
 
 /// Worker message types
 #[derive(Debug)]
@@ -142,6 +143,9 @@ impl JobWorker {
 
     /// Process a single job with actual pipeline
     pub async fn process_job(&self, job_id: Uuid, input_path: PathBuf, options: ConvertOptions) {
+        // 処理開始ログ
+        info!(%job_id, "Job started. Input: {:?}, Options: {:?}", input_path, options);
+
         // Mark job as processing
         self.queue.update(job_id, |job| {
             job.start();
@@ -167,6 +171,7 @@ impl JobWorker {
         let output_dir = self.work_dir.join("output");
         if let Err(e) = std::fs::create_dir_all(&output_dir) {
             let error_msg = format!("Failed to create output directory: {}", e);
+            error!(%job_id, "Failed to create output directory: {}", e);
             self.queue.update(job_id, |job| {
                 job.fail(error_msg.clone());
             });
@@ -191,6 +196,10 @@ impl JobWorker {
 
         match result {
             Ok(Ok(pipeline_result)) => {
+                // 完了ログ
+                let page_count = pipeline_result.page_count;
+                let elapsed = pipeline_result.elapsed_seconds;
+                info!(%job_id, "Job completed successfully. Pages: {}, Time: {:.2}s", page_count, elapsed);
                 // Pipeline succeeded
                 let page_count = pipeline_result.page_count;
                 let elapsed = pipeline_result.elapsed_seconds;
@@ -203,6 +212,9 @@ impl JobWorker {
                     .await;
             }
             Ok(Err(e)) => {
+                // パイプラインエラーログ
+                let error_msg = format!("Pipeline error: {}", e);
+                error!(%job_id, "Pipeline failed: {}", e);
                 // Pipeline error
                 let error_msg = format!("Pipeline error: {}", e);
                 queue.update(job_id, |job| {
@@ -211,6 +223,9 @@ impl JobWorker {
                 broadcaster.broadcast_error(job_id, &error_msg).await;
             }
             Err(e) => {
+                // パニックエラーログ
+                let error_msg = format!("Task panic: {}", e);
+                error!(%job_id, "Worker task panic: {}", e);
                 // Task panic
                 let error_msg = format!("Task panic: {}", e);
                 queue.update(job_id, |job| {

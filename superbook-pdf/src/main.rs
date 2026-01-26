@@ -26,6 +26,8 @@ use superbook_pdf::{
 use superbook_pdf::{ServeArgs, ServerConfig, WebServer};
 
 fn main() {
+    tracing_subscriber::fmt::init();
+    
     let cli = Cli::parse();
 
     let result = match cli.command {
