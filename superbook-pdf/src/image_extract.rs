@@ -314,7 +314,10 @@ impl MagickExtractor {
         let mut cmd = Command::new("magick");
         cmd.arg("-density").arg(options.dpi.to_string());
 
-        // Set background color for transparency
+        // Input file with page index (must come before image operations in ImageMagick 7)
+        cmd.arg(format!("{}[{}]", pdf_path.display(), page_index));
+
+        // Set background color for transparency (after input file for ImageMagick 7)
         if let Some(bg) = options.background {
             cmd.arg("-background")
                 .arg(format!("rgb({},{},{})", bg[0], bg[1], bg[2]));
@@ -334,9 +337,6 @@ impl MagickExtractor {
                 cmd.arg("-colorspace").arg("sRGB");
             }
         }
-
-        // Input file with page index
-        cmd.arg(format!("{}[{}]", pdf_path.display(), page_index));
 
         // Set output quality for JPEG
         if let ImageFormat::Jpeg { quality } = options.format {
