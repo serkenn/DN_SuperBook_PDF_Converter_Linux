@@ -23,11 +23,11 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          # ソースコードがあるディレクトリ（作業場所）を指定
-          context: ./DN_SuperBook_PDF_Converter_Linux/superbook-pdf
+          # リポジトリ名を除いたパスを指定します
+          context: ./superbook-pdf
           
-          # Containerfileの正確なパスを指定
-          file: ./DN_SuperBook_PDF_Converter_Linux/superbook-pdf/Containerfile
+          # こちらも同様です
+          file: ./superbook-pdf/Containerfile
           
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/superbook-pdf:latest
