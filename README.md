@@ -153,14 +153,26 @@ podman run --rm --device nvidia.com/gpu=all \
 
 **Web UI を起動:**
 
-```bash
-cd superbook-pdf
+プロジェクトルートから1コマンドで起動できます。
 
-# Docker
+```bash
+# Docker (GPU環境)
 docker compose up -d
 
-# Podman (4.7+)
+# Docker (CPUのみ)
+docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+
+# Podman (GPU環境)
 podman compose up -d
+
+# Podman (CPUのみ)
+podman compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+
+# ログ確認
+docker compose logs -f
+
+# 停止
+docker compose down
 ```
 
 ブラウザで http://localhost:8080 を開けば使えます。
@@ -168,16 +180,18 @@ podman compose up -d
 **ローカルでイメージをビルド:**
 
 ```bash
-cd superbook-pdf
-
 # Docker
-docker build -t superbook-pdf .
+docker compose build
 
 # Podman
-podman build -t superbook-pdf .
+podman compose build
+
+# 単体ビルド (CLI用)
+cd superbook-pdf
+docker build -t superbook-pdf .
 ```
 
-> **Note:** Docker/Podman両方とも同じ`Dockerfile`を使用します。特別な指定は不要です。
+> **Note:** Docker/Podman両方とも同じ`Dockerfile`と`docker-compose.yml`を使用します。
 
 ---
 

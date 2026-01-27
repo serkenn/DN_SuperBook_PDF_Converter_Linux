@@ -1,0 +1,19 @@
+# superbook-pdf CPU Override Configuration
+# GPU設定を無効化してCPUのみで動作させる
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+#   podman compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+
+services:
+  backend:
+    # GPU設定を削除
+    deploy: {}
+
+    environment:
+      - SUPERBOOK_VENV=/app/ai_venv
+      - SUPERBOOK_BIND=0.0.0.0
+      - SUPERBOOK_PORT=8080
+      - SUPERBOOK_WORK_DIR=/data/work
+      - SUPERBOOK_NO_GPU=1
+      - RUST_LOG=info
