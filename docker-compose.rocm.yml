@@ -1,0 +1,39 @@
+# superbook-pdf AMD ROCm Override Configuration
+# RADEON GPU (ROCm) で動作させる
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.rocm.yml up -d
+#   podman compose -f docker-compose.yml -f docker-compose.rocm.yml up -d
+#
+# 必要条件:
+#   - AMD GPU (RDNA/RDNA2/RDNA3 または GCN)
+#   - ROCm ドライバがインストール済み
+#   - /dev/kfd と /dev/dri が利用可能
+
+services:
+  backend:
+    build:
+      context: superbook-pdf
+      dockerfile: docker/backend/Dockerfile.rocm
+    image: superbook-pdf-backend-rocm:latest
+
+    # GPU設定を削除（NVIDIA用）
+    deploy: {}
+
+    # AMD GPU デバイスをマウント
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+
+    # ROCm用グループ権限
+    group_add:
+      - video
+      - render
+
+    environment:
+      - HSA_OVERRIDE_GFX_VERSION=10.3.0
+      - SUPERBOOK_VENV=/app/ai_venv
+      - SUPERBOOK_BIND=0.0.0.0
+      - SUPERBOOK_PORT=8080
+      - SUPERBOOK_WORK_DIR=/data/work
+      - RUST_LOG=info

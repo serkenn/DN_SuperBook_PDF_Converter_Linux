@@ -1,25 +1,33 @@
 # superbook-pdf Docker/Podman Compose Configuration
-# Backend + Frontend Architecture with GPU Support
+# Backend + Frontend Architecture with GPU/CPU Support
 #
 # Usage:
-#   docker compose up -d       # Start all services
-#   docker compose logs -f     # View logs
-#   docker compose down        # Stop all services
+#   # GPU環境 (デフォルト)
+#   docker compose up -d
+#
+#   # CPU環境 (GPUなし)
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+#
+#   # ログ確認
+#   docker compose logs -f
+#
+#   # 停止
+#   docker compose down
 #
 # Podman:
-#   podman-compose up -d
-#   podman compose up -d       # Podman 4.7+
+#   podman compose up -d                                              # GPU環境
+#   podman compose -f docker-compose.yml -f docker-compose.cpu.yml up -d  # CPU環境
 
 name: superbook-pdf
 
 services:
   # =============================================================
-  # Backend: Rust API Server with GPU Support
+  # Backend: Rust API Server with NVIDIA GPU Support
   # =============================================================
   backend:
     build:
-      context: .
-      dockerfile: docker/backend/Containerfile
+      context: superbook-pdf
+      dockerfile: docker/backend/Dockerfile
     image: superbook-pdf-backend:latest
     container_name: superbook-backend
     restart: unless-stopped
@@ -43,11 +51,9 @@ services:
       - RUST_LOG=info,superbook_pdf=info
 
     volumes:
-      # Input/Output directories
       - ./data/input:/data/input:ro
       - ./data/output:/data/output:rw
       - ./data/work:/data/work:rw
-      # Cache for AI models
       - ai-cache:/root/.cache
 
     networks:
@@ -65,8 +71,8 @@ services:
   # =============================================================
   frontend:
     build:
-      context: docker/frontend
-      dockerfile: Containerfile
+      context: superbook-pdf/docker/frontend
+      dockerfile: Dockerfile
     image: superbook-pdf-frontend:latest
     container_name: superbook-frontend
     restart: unless-stopped

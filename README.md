@@ -153,14 +153,32 @@ podman run --rm --device nvidia.com/gpu=all \
 
 **Web UI を起動:**
 
-```bash
-cd superbook-pdf
+プロジェクトルートから1コマンドで起動できます。
 
-# Docker
+```bash
+# NVIDIA GPU環境 (デフォルト)
 docker compose up -d
 
-# Podman (4.7+)
+# AMD GPU環境 (ROCm)
+docker compose -f docker-compose.yml -f docker-compose.rocm.yml up -d
+
+# CPUのみ
+docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+
+# Podman (NVIDIA GPU)
 podman compose up -d
+
+# Podman (AMD GPU)
+podman compose -f docker-compose.yml -f docker-compose.rocm.yml up -d
+
+# Podman (CPUのみ)
+podman compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+
+# ログ確認
+docker compose logs -f
+
+# 停止
+docker compose down
 ```
 
 ブラウザで http://localhost:8080 を開けば使えます。
@@ -168,9 +186,21 @@ podman compose up -d
 **ローカルでイメージをビルド:**
 
 ```bash
+# Docker (NVIDIA)
+docker compose build
+
+# Docker (AMD ROCm)
+docker compose -f docker-compose.yml -f docker-compose.rocm.yml build
+
+# Podman
+podman compose build
+
+# 単体ビルド (CLI用)
 cd superbook-pdf
-podman build -t superbook-pdf .
+docker build -t superbook-pdf .
 ```
+
+> **Note:** NVIDIA GPU、AMD GPU (ROCm)、CPUのみの3環境に対応しています。
 
 ---
 
