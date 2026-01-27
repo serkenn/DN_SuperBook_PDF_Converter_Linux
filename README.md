@@ -169,8 +169,15 @@ podman compose up -d
 
 ```bash
 cd superbook-pdf
+
+# Docker
+docker build -t superbook-pdf .
+
+# Podman
 podman build -t superbook-pdf .
 ```
+
+> **Note:** Docker/Podman両方とも同じ`Dockerfile`を使用します。特別な指定は不要です。
 
 ---
 
