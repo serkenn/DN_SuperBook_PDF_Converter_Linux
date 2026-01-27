@@ -931,7 +931,12 @@ impl PdfPipeline {
         let img_height = first_img.as_ref().map(|img| img.height()).unwrap_or(7016);
 
         let analysis = crate::PageOffsetAnalyzer::analyze_offsets(&page_detections, img_height);
-        progress.on_step_complete("Page number detection", &format!("shift: {}", analysis.page_number_shift));
+        let shift_msg = if analysis.page_number_shift == 0 {
+            "aligned".to_string()
+        } else {
+            format!("offset: {}px", analysis.page_number_shift)
+        };
+        progress.on_step_complete("Page number detection", &shift_msg);
 
         Ok(Some(analysis.page_number_shift))
     }
@@ -969,7 +974,7 @@ impl PdfPipeline {
             })
             .collect();
 
-        progress.on_step_complete("Finalize", &format!("{} images", results.len()));
+        progress.on_step_complete("Output finalized", &format!("{} pages", results.len()));
         Ok(results)
     }
 
@@ -993,7 +998,7 @@ impl PdfPipeline {
         }
 
         if gray_images.is_empty() {
-            progress.on_step_complete("Vertical detection", "no images to analyze");
+            progress.on_step_complete("Text direction", "no images to analyze");
             return Ok(false);
         }
 
@@ -1001,11 +1006,11 @@ impl PdfPipeline {
         match crate::detect_book_vertical_writing(&gray_images, &vd_options) {
             Ok(result) => {
                 let direction = if result.is_vertical { "vertical" } else { "horizontal" };
-                progress.on_step_complete("Vertical detection", direction);
+                progress.on_step_complete("Text direction", direction);
                 Ok(result.is_vertical)
             }
             Err(_) => {
-                progress.on_step_complete("Vertical detection", "failed");
+                progress.on_step_complete("Text direction", "detection failed");
                 Ok(false)
             }
         }

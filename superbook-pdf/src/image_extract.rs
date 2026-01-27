@@ -287,6 +287,69 @@ pub trait ImageExtractor {
 pub struct MagickExtractor;
 
 impl MagickExtractor {
+    /// Build ImageMagick command arguments in correct order.
+    ///
+    /// ImageMagick 7 requires specific argument ordering:
+    /// - Input settings (like -density) come BEFORE input file
+    /// - Operations (like -alpha, -colorspace) come AFTER input file
+    /// - Output settings (like -quality) come before output file
+    ///
+    /// This function ensures cross-platform compatibility (Linux, macOS, Windows).
+    #[allow(dead_code)]
+    pub fn build_magick_args(
+        pdf_path: &Path,
+        page_index: usize,
+        output_path: &Path,
+        options: &ExtractOptions,
+    ) -> Vec<String> {
+        let mut args = Vec::new();
+
+        // 1. Input settings (before input file)
+        args.push("-density".to_string());
+        args.push(options.dpi.to_string());
+
+        // 2. Input file with page index
+        args.push(format!("{}[{}]", pdf_path.display(), page_index));
+
+        // 3. Image operations (after input file)
+        // Set background color for transparency
+        if let Some(bg) = options.background {
+            args.push("-background".to_string());
+            args.push(format!("rgb({},{},{})", bg[0], bg[1], bg[2]));
+            args.push("-alpha".to_string());
+            args.push("remove".to_string());
+            args.push("-alpha".to_string());
+            args.push("off".to_string());
+        }
+
+        // Set colorspace
+        match options.colorspace {
+            ColorSpace::Grayscale => {
+                args.push("-colorspace".to_string());
+                args.push("gray".to_string());
+            }
+            ColorSpace::Cmyk => {
+                args.push("-colorspace".to_string());
+                args.push("CMYK".to_string());
+            }
+            ColorSpace::Rgb => {
+                args.push("-colorspace".to_string());
+                args.push("sRGB".to_string());
+            }
+        }
+
+        // 4. Output settings (before output file)
+        if let ImageFormat::Jpeg { quality } = options.format {
+            args.push("-quality".to_string());
+            args.push(quality.to_string());
+        }
+
+        // 5. Output file
+        args.push(output_path.to_string_lossy().to_string());
+
+        args
+    }
+
     /// Extract a single page from PDF using ImageMagick
     pub fn extract_page(
         pdf_path: &Path,
@@ -311,40 +374,12 @@ impl MagickExtractor {
             let _ = std::fs::remove_file(test_file);
         }
 
+        // Build arguments with correct order for cross-platform compatibility
+        // (especially macOS ImageMagick which requires -alpha after input file)
+        let args = Self::build_magick_args(pdf_path, page_index, output_path, options);
+
         let mut cmd = Command::new("magick");
-        cmd.arg("-density").arg(options.dpi.to_string());
-
-        // Input file with page index (must come before image operations in ImageMagick 7)
-        cmd.arg(format!("{}[{}]", pdf_path.display(), page_index));
-
-        // Set background color for transparency (after input file for ImageMagick 7)
-        if let Some(bg) = options.background {
-            cmd.arg("-background")
-                .arg(format!("rgb({},{},{})", bg[0], bg[1], bg[2]));
-            cmd.arg("-alpha").arg("remove");
-            cmd.arg("-alpha").arg("off");
-        }
-
-        // Set colorspace
-        match options.colorspace {
-            ColorSpace::Grayscale => {
-                cmd.arg("-colorspace").arg("gray");
-            }
-            ColorSpace::Cmyk => {
-                cmd.arg("-colorspace").arg("CMYK");
-            }
-            ColorSpace::Rgb => {
-                cmd.arg("-colorspace").arg("sRGB");
-            }
-        }
-
-        // Set output quality for JPEG
-        if let ImageFormat::Jpeg { quality } = options.format {
-            cmd.arg("-quality").arg(quality.to_string());
-        }
-
-        // Output file
-        cmd.arg(output_path);
+        cmd.args(&args);
 
         let output = cmd.output()?;
 
@@ -2110,5 +2145,160 @@ mod tests {
             let opts = ExtractOptions::builder().colorspace(space).build();
             assert_eq!(opts.colorspace, space);
         }
+    }
+
+    // ============ ImageMagick Argument Order Tests (macOS compatibility) ============
+
+    #[test]
+    fn test_magick_args_alpha_comes_after_input_file() {
+        // TC-EXT-MAC-001: -alpha operations must come AFTER input file
+        // This is critical for macOS ImageMagick compatibility
+        let pdf_path = Path::new("/test/input.pdf");
+        let output_path = Path::new("/test/output.png");
+        let options = ExtractOptions::builder()
+            .dpi(300)
+            .background([255, 255, 255])
+            .build();
+
+        let args = MagickExtractor::build_magick_args(pdf_path, 0, output_path, &options);
+
+        // Find positions
+        let input_pos = args.iter().position(|a| a.contains("input.pdf")).unwrap();
+        let alpha_pos = args.iter().position(|a| a == "-alpha").unwrap();
+
+        // -alpha must come AFTER input file
+        assert!(
+            alpha_pos > input_pos,
+            "ImageMagick: -alpha (pos {}) must come after input file (pos {}). Args: {:?}",
+            alpha_pos,
+            input_pos,
+            args
+        );
+    }
+
+    #[test]
+    fn test_magick_args_colorspace_comes_after_input_file() {
+        // TC-EXT-MAC-002: -colorspace must come AFTER input file
+        let pdf_path = Path::new("/test/input.pdf");
+        let output_path = Path::new("/test/output.png");
+        let options = ExtractOptions::builder()
+            .dpi(300)
+            .colorspace(ColorSpace::Grayscale)
+            .build();
+
+        let args = MagickExtractor::build_magick_args(pdf_path, 0, output_path, &options);
+
+        let input_pos = args.iter().position(|a| a.contains("input.pdf")).unwrap();
+        let colorspace_pos = args.iter().position(|a| a == "-colorspace").unwrap();
+
+        assert!(
+            colorspace_pos > input_pos,
+            "ImageMagick: -colorspace (pos {}) must come after input file (pos {}). Args: {:?}",
+            colorspace_pos,
+            input_pos,
+            args
+        );
+    }
+
+    #[test]
+    fn test_magick_args_density_comes_before_input_file() {
+        // TC-EXT-MAC-003: -density (input setting) must come BEFORE input file
+        let pdf_path = Path::new("/test/input.pdf");
+        let output_path = Path::new("/test/output.png");
+        let options = ExtractOptions::builder().dpi(300).build();
+
+        let args = MagickExtractor::build_magick_args(pdf_path, 0, output_path, &options);
+
+        let density_pos = args.iter().position(|a| a == "-density").unwrap();
+        let input_pos = args.iter().position(|a| a.contains("input.pdf")).unwrap();
+
+        assert!(
+            density_pos < input_pos,
+            "ImageMagick: -density (pos {}) must come before input file (pos {}). Args: {:?}",
+            density_pos,
+            input_pos,
+            args
+        );
+    }
+
+    #[test]
+    fn test_magick_args_output_comes_last() {
+        // TC-EXT-MAC-004: Output file must be the last argument
+        let pdf_path = Path::new("/test/input.pdf");
+        let output_path = Path::new("/test/output.png");
+        let options = ExtractOptions::builder()
+            .dpi(300)
+            .background([255, 255, 255])
+            .colorspace(ColorSpace::Rgb)
+            .build();
+
+        let args = MagickExtractor::build_magick_args(pdf_path, 0, output_path, &options);
+
+        let last_arg = args.last().unwrap();
+        assert!(
+            last_arg.contains("output.png"),
+            "Output file must be last argument. Got: {:?}",
+            args
+        );
+    }
+
+    #[test]
+    fn test_magick_args_full_order_with_all_options() {
+        // TC-EXT-MAC-005: Full argument order verification
+        let pdf_path = Path::new("/test/input.pdf");
+        let output_path = Path::new("/test/output.jpg");
+        let options = ExtractOptions::builder()
+            .dpi(300)
+            .background([255, 255, 255])
+            .colorspace(ColorSpace::Rgb)
+            .format(ImageFormat::Jpeg { quality: 95 })
+            .build();
+
+        let args = MagickExtractor::build_magick_args(pdf_path, 0, output_path, &options);
+
+        // Expected order:
+        // 1. -density 300 (input setting)
+        // 2. input.pdf[0] (input file)
+        // 3. -background rgb(255,255,255) (operation)
+        // 4. -alpha remove (operation)
+        // 5. -alpha off (operation)
+        // 6. -colorspace sRGB (operation)
+        // 7. -quality 95 (output setting)
+        // 8. output.jpg (output file)
+
+        assert_eq!(args[0], "-density");
+        assert_eq!(args[1], "300");
+        assert!(args[2].contains("input.pdf[0]"));
+        assert_eq!(args[3], "-background");
+        assert!(args[4].contains("rgb(255,255,255)"));
+        assert_eq!(args[5], "-alpha");
+        assert_eq!(args[6], "remove");
+        assert_eq!(args[7], "-alpha");
+        assert_eq!(args[8], "off");
+        assert_eq!(args[9], "-colorspace");
+        assert_eq!(args[10], "sRGB");
+        assert_eq!(args[11], "-quality");
+        assert_eq!(args[12], "95");
+        assert!(args[13].contains("output.jpg"));
+    }
+
+    #[test]
+    fn test_magick_args_without_background() {
+        // TC-EXT-MAC-006: When no background, -alpha should not be present
+        let pdf_path = Path::new("/test/input.pdf");
+        let output_path = Path::new("/test/output.png");
+        let options = ExtractOptions::builder()
+            .dpi(300)
+            .no_background()
+            .build();
+
+        let args = MagickExtractor::build_magick_args(pdf_path, 0, output_path, &options);
+
+        // -alpha should not be present
+        assert!(
+            !args.iter().any(|a| a == "-alpha"),
+            "-alpha should not be present when no background. Args: {:?}",
+            args
+        );
     }
 }

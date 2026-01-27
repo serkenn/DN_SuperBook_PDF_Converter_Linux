@@ -57,6 +57,24 @@ impl VerboseProgress {
     fn new(verbose_level: u32) -> Self {
         Self { verbose_level }
     }
+
+    /// Check if step messages should be shown (level >= 1)
+    #[allow(dead_code)]
+    fn should_show_steps(&self) -> bool {
+        self.verbose_level > 0
+    }
+
+    /// Check if progress messages should be shown (level >= 1)
+    #[allow(dead_code)]
+    fn should_show_progress(&self) -> bool {
+        self.verbose_level > 0
+    }
+
+    /// Check if debug messages should be shown (level >= 3, i.e., -vvv)
+    #[allow(dead_code)]
+    fn should_show_debug(&self) -> bool {
+        self.verbose_level > 2
+    }
 }
 
 impl ProgressCallback for VerboseProgress {
@@ -80,7 +98,7 @@ impl ProgressCallback for VerboseProgress {
     }
 
     fn on_debug(&self, message: &str) {
-        if self.verbose_level > 1 {
+        if self.should_show_debug() {
             println!("    [DEBUG] {}", message);
         }
     }
@@ -789,4 +807,59 @@ fn run_serve(args: &ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     Ok(())
+}
+
+// ============ Unit Tests ============
+
+#[cfg(test)]
+mod tests {
+    use super::VerboseProgress;
+
+    // TC-CLI-OUTPUT-001: DEBUG messages should only appear at verbose level 3 (-vvv)
+    #[test]
+    fn test_debug_messages_require_level_3() {
+        // Level 0: no debug
+        let handler_0 = VerboseProgress::new(0);
+        assert!(!handler_0.should_show_debug());
+
+        // Level 1 (-v): no debug
+        let handler_1 = VerboseProgress::new(1);
+        assert!(!handler_1.should_show_debug());
+
+        // Level 2 (-vv): no debug
+        let handler_2 = VerboseProgress::new(2);
+        assert!(!handler_2.should_show_debug());
+
+        // Level 3 (-vvv): should show debug
+        let handler_3 = VerboseProgress::new(3);
+        assert!(handler_3.should_show_debug());
+    }
+
+    // TC-CLI-OUTPUT-002: Verbose level thresholds
+    #[test]
+    fn test_verbose_level_thresholds() {
+        // Level 0: no output
+        let handler_0 = VerboseProgress::new(0);
+        assert!(!handler_0.should_show_steps());
+        assert!(!handler_0.should_show_progress());
+        assert!(!handler_0.should_show_debug());
+
+        // Level 1 (-v): basic progress
+        let handler_1 = VerboseProgress::new(1);
+        assert!(handler_1.should_show_steps());
+        assert!(handler_1.should_show_progress());
+        assert!(!handler_1.should_show_debug());
+
+        // Level 2 (-vv): detailed info
+        let handler_2 = VerboseProgress::new(2);
+        assert!(handler_2.should_show_steps());
+        assert!(handler_2.should_show_progress());
+        assert!(!handler_2.should_show_debug());
+
+        // Level 3 (-vvv): debug info
+        let handler_3 = VerboseProgress::new(3);
+        assert!(handler_3.should_show_steps());
+        assert!(handler_3.should_show_progress());
+        assert!(handler_3.should_show_debug());
+    }
 }
